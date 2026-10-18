@@ -4,7 +4,7 @@ import { Icon } from './common.tsx';
 export const MAKER = {
   name: 'Julius Kim',
   role: '기획 · 디자인 · 개발',
-  portfolio: 'https://julius-portfolio-2026.vercel.app',
+  portfolio: 'https://juliuskim-gamedesign.vercel.app',
   mail: 'kia1026@naver.com',
 };
 
