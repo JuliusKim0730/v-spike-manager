@@ -1,0 +1,1 @@
+{ "name": "V-스파이크 매니저", "short_name": "V-스파이크", "start_url": "./", "display": "standalone", "orientation": "portrait", "background_color": "#0f1d3a", "theme_color": "#0f1d3a", "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
