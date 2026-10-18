@@ -12,18 +12,20 @@ import { Tactics } from './Tactics.tsx';
 import { Standings } from './Standings.tsx';
 import { Club, Market } from './Club.tsx';
 import { MatchView } from './Match.tsx';
+import { Credits } from './Credits.tsx';
 
 export function App() {
   const [career, setCareer] = useState<Career | null>(null);
-  const [screen, setScreen] = useState<'title' | 'new'>('title');
+  const [screen, setScreen] = useState<'title' | 'new' | 'credits'>('title');
   if (career) return <GameShell career={career} onQuit={() => { setCareer(null); setScreen('title'); }} />;
   if (screen === 'new') return <NewGame onBack={() => setScreen('title')} onStart={c => setCareer(c)} />;
-  return <Title onNew={() => setScreen('new')} onLoad={c => setCareer(c)} />;
+  if (screen === 'credits') return <Credits onBack={() => setScreen('title')} />;
+  return <Title onNew={() => setScreen('new')} onLoad={c => setCareer(c)} onCredits={() => setScreen('credits')} />;
 }
 
 // ───────────────────────── title ─────────────────────────
 
-function Title({ onNew, onLoad }: { onNew(): void; onLoad(c: Career): void }) {
+function Title({ onNew, onLoad, onCredits }: { onNew(): void; onLoad(c: Career): void; onCredits(): void }) {
   const [, force] = useState(0);
   const [slots, setSlots] = useState(false);
   const [confirmDel, setConfirmDel] = useState<number | null>(null);
@@ -40,6 +42,7 @@ function Title({ onNew, onLoad }: { onNew(): void; onLoad(c: Career): void }) {
           <button className="tbtn cont" disabled={last === null} onClick={() => setSlots(true)}>이어하기</button>
           <button className="tbtn new" onClick={onNew}>새 게임 시작</button>
           <span className="tiny" style={{ textAlign: 'center', opacity: .85 }}>게스트 모드 · 기록은 이 브라우저에만 저장됩니다</span>
+          <button className="credit-link" onClick={onCredits}>만든이 · Contact</button>
         </div>
       </div>
       {slots && (

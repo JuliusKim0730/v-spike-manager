@@ -351,3 +351,9 @@ tr.zone-down td:first-child { box-shadow: inset 3px 0 var(--red); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } .mini-court .ball, .mini-court .dotp { transition: none; } }
 select.sel { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); padding: 4px 8px; width: 100%; }
+
+/* title: 만든이 link */
+.credit-link { background: none; border: 0; color: inherit; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; opacity: .9; padding: 6px; align-self: center; text-shadow: 0 1px 3px rgb(0 0 0 / .5); }
+a.item { color: inherit; text-decoration: none; }
+a.item .chev { width: 20px; height: 20px; color: var(--muted); flex: none; display: flex; }
+a.item .chev svg { width: 100%; height: 100%; }
