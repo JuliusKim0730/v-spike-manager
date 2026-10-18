@@ -7,6 +7,7 @@ import type { Facility } from '../engine/league/types.ts';
 import type { Position } from '../engine/types.ts';
 import { Grade, Icon, money, Overlay, Ovr, Pos, POS_KO, Sheet, Stars, useGame } from './common.tsx';
 import { FacilityArt } from './art.tsx';
+import { CreditsBody } from './Credits.tsx';
 
 const FAC: Facility[] = ['training', 'medical', 'restaurant', 'stadium', 'analysis', 'bus'];
 
@@ -17,6 +18,7 @@ export function Club() {
   const club = userClub(c);
   const f = finance(c);
   const [fac, setFac] = useState<Facility | null>(null);
+  const [credits, setCredits] = useState(false);
   const k = c.phase.k;
   const MENU: [string, string, string, string | null, () => void][] = [
     ['🛒', 'FA 시장', 'FA 선수 영입 · 남는 선수 방출', canTrade(c) ? '영입 가능' : null, openMarket],
@@ -72,7 +74,9 @@ export function Club() {
           <div className="list small">{c.seasons.map(s => <Line key={s.year} k={`${s.year}시즌 · ${DIV_NAME[s.division]}`} v={`${s.finish} · ${s.balance >= 0 ? '흑자' : '적자'}`} />)}</div>
         </section>
       )}
+      <button className="btn block" onClick={() => setCredits(true)}>만든이 · Contact</button>
       <button className="btn block" onClick={quit}>저장하고 타이틀로</button>
+      {credits && <Sheet title="만든이 · Contact" onClose={() => setCredits(false)}><CreditsBody /></Sheet>}
       {fac && <FacilitySheet k={fac} onClose={() => setFac(null)} />}
     </>
   );
