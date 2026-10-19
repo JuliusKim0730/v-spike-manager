@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Career } from '../game/career.ts';
-import { clubName, DIV_NAME, makeWorld, newCareer, phaseLabel, starterAvg, userClub, budgetOf } from '../game/career.ts';
+import type { Career, LiveMatch } from '../game/career.ts';
+import { advance, clubName, DIV_NAME, makeWorld, newCareer, phaseLabel, startLive, starterAvg, userClub, budgetOf } from '../game/career.ts';
 import { CLUBS } from '../game/names.ts';
 import { deleteSlot, lastSlot, loadCareer, saveCareer, slotInfo, SLOTS } from '../game/storage.ts';
 import type { Pro } from '../engine/league/types.ts';
@@ -11,7 +11,7 @@ import { Roster, PlayerSheet } from './Roster.tsx';
 import { Tactics } from './Tactics.tsx';
 import { Standings } from './Standings.tsx';
 import { Club, Market } from './Club.tsx';
-import { MatchView } from './Match.tsx';
+import { LiveMatchView, MatchView } from './Match.tsx';
 import { Credits } from './Credits.tsx';
 
 export function App() {
@@ -136,7 +136,8 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
   const [, setV] = useState(0);
   const [tab, setTab] = useState<Tab>('home');
   const [toastMsg, setToast] = useState<string | null>(null);
-  const [match, setMatch] = useState<number | false>(false);
+  const [match, setMatch] = useState<number | 'end' | false>(false);
+  const [live, setLive] = useState<{ m: LiveMatch; speed: number } | null>(null);
   const [player, setPlayer] = useState<Pro | null>(null);
   const [market, setMarket] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -158,6 +159,7 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
   const api: GameApi = {
     c, refresh, toast, busy, setTab, quit: onQuit,
     openMatch: (speed?: number) => setMatch(speed ?? 0),
+    openLive: (speed: number) => { const m = startLive(c); if (m) setLive({ m, speed }); },
     openPlayer: p => setPlayer(p),
     openMarket: () => setMarket(true),
     run: fn => { setBusy(true); window.setTimeout(() => { try { fn(); } finally { setBusy(false); refresh(); } }, 30); },
@@ -181,7 +183,14 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
           </div>
         </nav>
       </div>
-      {match !== false && c.lastMatch && <MatchView report={c.lastMatch} speed={match} onClose={() => setMatch(false)} />}
+      {match !== false && c.lastMatch && <MatchView report={c.lastMatch} speed={match === 'end' ? 0 : match} atEnd={match === 'end'} onClose={() => setMatch(false)} />}
+      {live && <LiveMatchView live={live.m} speed={live.speed} onDone={() => {
+        const m = advance(c, { live: live.m });
+        setLive(null);
+        refresh();
+        if (m) toast(m);
+        setMatch('end');
+      }} />}
       {market && <Market onClose={() => setMarket(false)} />}
       {player && <PlayerSheet p={player} onClose={() => setPlayer(null)} />}
       {toastMsg && <div className="toast" role="status">{toastMsg}</div>}

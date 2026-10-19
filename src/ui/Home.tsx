@@ -313,7 +313,7 @@ function MatchCard() {
 function coachTip(c: Career, scout: (string | null)[]): string {
   const [dist, tempo, serve, block] = scout;
   if (serve === '강서브') return '상대는 강서브 팀입니다. 3인 리시브로 버티면 범실을 기다릴 수 있어요.';
-  if (serve === '목적타') return '상대가 목적타로 약한 리시버를 노립니다. 리시브 좋은 선수를 선발에 두세요.';
+  if (serve?.startsWith('목적타')) return '상대가 목적타로 약한 리시버를 노립니다. 리시브 좋은 선수를 선발에 두세요.';
   if (dist === '라이트 집중' || dist === '레프트 중심') return `상대 공격이 ${dist === '라이트 집중' ? '라이트' : '레프트'}에 몰립니다. 에이스 마크 블로킹이 잘 먹혀요.`;
   if (dist === '중앙 활용') return '상대가 중앙 속공을 자주 씁니다. 예측 블로킹을 고려하세요.';
   if (tempo === '빠른 공') return '상대는 빠른 공 위주입니다. 강서브로 리시브를 흔들면 단순해집니다.';
@@ -332,17 +332,18 @@ function PreMatch({ onClose }: { onClose(): void }) {
   const scout = scoutTactic(c, f.opp);
   const preset = c.preset !== 'custom' ? PRESETS[c.preset].name : '직접 설정';
   const h2h = c.results.filter(r => r.opp === f.opp);
-  const play = (speed: number | null) => run(() => {
+  const play = () => run(() => {
     const m = advance(c);
     onClose();
-    if (speed != null) g.openMatch(speed); else if (m) toast(m);
+    if (m) toast(m);
   });
+  const direct = (speed: number) => { onClose(); g.openLive(speed); };
   const [home, away] = f.home ? [c.userId, f.opp] : [f.opp, c.userId];
   return (
     <Overlay title={`${f.label} · 경기 정보`} onClose={onClose} footer={<>
-      <button className="btn blue3d" disabled={busy} onClick={() => play(0)}><Icon name="ff" />관전</button>
-      <button className="btn orange" disabled={busy} onClick={() => play(2)}><Icon name="bolt" />하이라이트</button>
-      <button className="btn red" disabled={busy} onClick={() => play(null)}>{busy ? <span className="spinner" /> : '풀 진행'}</button>
+      <button className="btn blue3d" disabled={busy} onClick={() => direct(0)}><Icon name="play" />직접 지휘</button>
+      <button className="btn orange" disabled={busy} onClick={() => direct(2)}><Icon name="bolt" />빠른 지휘</button>
+      <button className="btn red" disabled={busy} onClick={() => play()}>{busy ? <span className="spinner" /> : '결과만'}</button>
     </>}>
       <section className="card">
         <div className="vs-card">
@@ -374,7 +375,7 @@ function PreMatch({ onClose }: { onClose(): void }) {
           </section>
         ))}
       </div>
-      <p className="tiny muted" style={{ margin: 0 }}>관전 = 1배속 중계, 하이라이트 = 10배속, 풀 진행 = 결과만. 상대 라인업은 예상 선발입니다.</p>
+      <p className="tiny muted" style={{ margin: 0 }}>직접 지휘 = 1배속 중계, 빠른 지휘 = 10배속. 둘 다 작전 타임·테크니컬 타임아웃·세트 사이에 멈춰서 작전과 선수를 바꿀 수 있어요. 결과만 = 수석 코치에게 맡기고 결과만 봅니다. 상대 라인업은 예상 선발입니다.</p>
     </Overlay>
   );
 }

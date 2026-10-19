@@ -12,6 +12,8 @@ export interface GameApi {
   toast(msg: string): void;
   /** speed index into the match viewer's speeds (0 = 1×); omitted = show the finished match */
   openMatch(speed?: number): void;
+  /** play the user's next match live (작전 타임·교체); speed index as above */
+  openLive(speed: number): void;
   openPlayer(p: Pro): void;
   openMarket(): void;
   setTab(t: Tab): void;
