@@ -3,11 +3,11 @@
  * Reuses the balance-sim league code (engine/league/season.ts) and drives it turn by turn
  * so the player can decide between turns.
  */
-import type { Player, PlayerLine, Position, Tactic, Team } from '../engine/types.ts';
+import type { MatchResult, Player, PlayerLine, Position, Tactic, Team } from '../engine/types.ts';
 import { Rng } from '../engine/rng.ts';
 import { ID_SEQ, makePlayer, ovr, DEFAULT_TACTIC } from '../engine/player.ts';
-import { playMatch } from '../engine/match.ts';
-import { smartCoach, basicCoach } from '../engine/coach.ts';
+import { matchSteps, playMatch, type MatchEvent, type StepInput } from '../engine/match.ts';
+import { aiCoach, assistantCoach, basicCoach } from '../engine/coach.ts';
 import { startingSkills } from '../engine/skills.ts';
 import { createWorld, budgetOf, payroll, signPro } from '../engine/league/world.ts';
 import { RULES, GRADE_RANGE } from '../engine/league/rules.ts';
@@ -107,9 +107,9 @@ const rngOf = (c: Career) => { const r = new Rng(1); r.state = c.rng; return r; 
 const saveRng = (c: Career, r: Rng) => { c.rng = r.state; };
 
 export const PRESETS: Record<Exclude<Preset, 'custom'>, { name: string; desc: string; tactic: Tactic }> = {
-  stable: { name: '안정형', desc: '높은 공 · 안전 서브 · 3인 리시브. 범실을 줄이고 버틴다', tactic: { distribution: 'balanced', tempo: 'high', serve: 'safe', block: 'read', defense: 'deep', reception: 3 } },
-  attack: { name: '공격형', desc: '라이트 집중 · 빠른 공 · 2인 리시브. 에이스에게 몰아준다', tactic: { distribution: 'right', tempo: 'fast', serve: 'target', block: 'read', defense: 'deep', reception: 2 } },
-  serve: { name: '서브 공략형', desc: '강서브로 리시브를 흔들고 높은 공을 블로킹으로 잡는다', tactic: { distribution: 'balanced', tempo: 'high', serve: 'power', block: 'read', defense: 'deep', reception: 3 } },
+  stable: { name: '안정형', desc: '높은 공 · 안전 서브 · 3인 리시브. 범실을 줄이고 버틴다', tactic: { distribution: 'balanced', tempo: 'high', serve: 'safe', block: 'read', defense: 'deep', reception: 3, aim: 'weak', trick: 'none' } },
+  attack: { name: '공격형', desc: '라이트 집중 · 빠른 공 · 2인 리시브. 에이스에게 몰아준다', tactic: { distribution: 'right', tempo: 'fast', serve: 'target', block: 'read', defense: 'deep', reception: 2, aim: 'weak', trick: 'none' } },
+  serve: { name: '서브 공략형', desc: '강서브로 리시브를 흔들고 높은 공을 블로킹으로 잡는다', tactic: { distribution: 'balanced', tempo: 'high', serve: 'power', block: 'read', defense: 'deep', reception: 3, aim: 'weak', trick: 'none' } },
 };
 
 export function phaseLabel(c: Career, p: Phase = c.phase): string {
@@ -287,6 +287,7 @@ export function seasonProgress(c: Career): [number, number] {
 function teamFor(c: Career, id: number) {
   if (id === c.userId) return userTeam(c);
   const t = buildTeam(c.world.clubs[id]);
+  t.team.tactic = clubTactic(c, id, t.starters);
   t.team.bench = c.world.clubs[id].roster.filter(p => !t.starters.includes(p) && p.injured === 0).slice(0, 7);
   return t;
 }
@@ -315,15 +316,61 @@ function recordStats(c: Career, res: ReturnType<typeof playMatch>) {
   }
 }
 
-/** Play one match between two clubs; the user's own match gets a full report */
-function play(c: Career, r: Rng, h: number, a: number, opts: { remaining: number; league: boolean; label: string }): 0 | 1 {
-  const H = c.world.clubs[h], A = c.world.clubs[a];
+/** An AI club's game plan for a match: its usual tactic plus a serve aim and set play that vary by match day */
+export function clubTactic(c: Career, id: number, starters: Pro[] = buildTeam(c.world.clubs[id]).starters): Tactic {
+  const t = aiTactic(starters);
+  const r = new Rng((id + 1) * 7919 + c.world.year * 131 + c.day * 31 + (c.phase.k === 'playoff' ? 977 : 0));
+  const [s, , mb1, , , mb2] = starters;
+  const oh = starters.filter(p => p.position === 'OH');
+  if (t.serve === 'target') t.aim = r.pickWeighted(['weak', 'hitter', 'seam', 'short'] as const, [3, 1, 1, 1]);
+  const quick = (mb1.tech.quick + mb2.tech.quick) / 2;
+  t.trick = s.tech.set >= 66 && quick >= 64 && r.chance(0.4) ? 'decoy' : s.tech.set >= 68 && r.chance(0.25) ? 'dump' : 'none';
+  if (r.chance(0.25)) t.reception = oh.every(p => p.tech.receive >= 66) ? 2 : 3;
+  if (r.chance(0.2)) t.block = r.pickWeighted(['read', 'commit', 'aceMark'] as const, [2, 1, 1]);
+  return t;
+}
+
+/** What the person's side does when nobody steers it: the assistant coach, or nothing */
+const userAuto = (c: Career) => (c.autoCoach ? assistantCoach : undefined);
+
+/** A user match being played live (web app): the generator plus what the turn needs afterwards */
+export interface LiveMatch {
+  steps: Generator<MatchEvent, MatchResult, StepInput | undefined>;
+  home: number; away: number; userSide: 0 | 1; label: string;
+  th: { team: Team; starters: Pro[] }; ta: { team: Team; starters: Pro[] };
+  result?: MatchResult;
+}
+
+/**
+ * Start the user's next match so it can be steered point by point.
+ * Finish it, then call advance(c, { live }) to record it with the rest of the match day.
+ */
+export function startLive(c: Career): LiveMatch | null {
+  const f = nextFixture(c);
+  if (!f) return null;
+  const [h, a] = f.home ? [c.userId, f.opp] : [f.opp, c.userId];
+  if (c.phase.k === 'playoff') for (const id of [h, a]) for (const p of c.world.clubs[id].roster) p.energy = Math.min(100, p.energy + 30);
+  const r = rngOf(c);
+  const seed = r.int(1, 2 ** 31);
+  saveRng(c, r);
   const th = teamFor(c, h), ta = teamFor(c, a);
+  const userSide: 0 | 1 = h === c.userId ? 0 : 1;
+  const coaches: [typeof aiCoach | undefined, typeof aiCoach | undefined] = [aiCoach, aiCoach];
+  coaches[userSide] = userAuto(c);
+  const steps = matchSteps([th.team, ta.team], { seed, log: true, homeTeam: 0, manual: userSide, coaches });
+  return { steps, home: h, away: a, userSide, label: f.label, th, ta };
+}
+
+/** Play one match between two clubs; the user's own match gets a full report */
+function play(c: Career, r: Rng, h: number, a: number, opts: { remaining: number; league: boolean; label: string }, live?: LiveMatch): 0 | 1 {
+  const H = c.world.clubs[h], A = c.world.clubs[a];
   const involvesUser = h === c.userId || a === c.userId;
-  const userCoach = c.autoCoach ? smartCoach : undefined;
-  const res = playMatch([th.team, ta.team], {
+  const done = involvesUser && live?.result && live.home === h && live.away === a ? live : undefined;
+  const th = done ? done.th : teamFor(c, h), ta = done ? done.ta : teamFor(c, a);
+  const coachFor = (id: number) => (id === c.userId ? userAuto(c) : involvesUser ? aiCoach : basicCoach);
+  const res = done ? done.result! : playMatch([th.team, ta.team], {
     seed: r.int(1, 2 ** 31), log: involvesUser, homeTeam: 0,
-    coaches: [h === c.userId ? userCoach : basicCoach, a === c.userId ? userCoach : basicCoach],
+    coaches: [coachFor(h), coachFor(a)],
   });
   const sets = res.setsWon[0] + res.setsWon[1];
   recordStats(c, res);
@@ -369,7 +416,7 @@ function aiFreeTurn(club: Club) {
 
 // ───────────────────────── advancing turns ─────────────────────────
 
-export interface AdvanceInput { free?: FreeChoice; sponsor?: 'parent' | 'naming' }
+export interface AdvanceInput { free?: FreeChoice; sponsor?: 'parent' | 'naming'; live?: LiveMatch }
 
 /** Finish the current turn and enter the next one. Returns a short result line for the UI. */
 export function advance(c: Career, input: AdvanceInput = {}): string | void {
@@ -405,14 +452,14 @@ export function advance(c: Career, input: AdvanceInput = {}): string | void {
       break;
     }
     case 'match': {
-      msg = playDay(c, r);
+      msg = playDay(c, r, input.live);
       if (c.day >= c.days[0].length) startPlayoffs(c);
       else if (c.day === allstarAfter(c)) c.phase = { k: 'allstar' };
       break;
     }
     case 'allstar': c.phase = { k: 'match' }; break;
     case 'playoff': {
-      msg = playoffTurn(c, r);
+      msg = playoffTurn(c, r, input.live);
       if (c.playoffs!.every(p => p.stage === 'done')) { c.phase = { k: 'books' }; enterBooks(c); }
       break;
     }
@@ -462,7 +509,7 @@ function freeTurn(c: Career, r: Rng, choice: FreeChoice): string {
     const opp = opps[r.int(0, opps.length - 1)];
     // practice match: no standings, but it moves the gauges (GDD 7.2)
     const th = userTeam(c), ta = teamFor(c, opp.id);
-    const res = playMatch([th.team, ta.team], { seed: r.int(1, 2 ** 31), log: true, coaches: [c.autoCoach ? smartCoach : undefined, basicCoach] });
+    const res = playMatch([th.team, ta.team], { seed: r.int(1, 2 ** 31), log: true, coaches: [userAuto(c), aiCoach] });
     const startIds = new Set(th.starters.map(p => p.id));
     for (const p of club.roster) {
       const gain = startIds.has(p.id) ? 8 : 4;
@@ -491,14 +538,14 @@ function freeTurn(c: Career, r: Rng, choice: FreeChoice): string {
   return '훈련 · 성장 포인트 적립, 경기감각 소폭 하락';
 }
 
-function playDay(c: Career, r: Rng): string {
+function playDay(c: Career, r: Rng, live?: LiveMatch): string {
   const day = c.day;
   const nDays = c.days[0].length;
   const remaining = nDays - day;
   let msg = '';
   for (let d = 0; d < 3; d++) {
     for (const [h, a] of c.days[d][day]) {
-      const w = play(c, r, h, a, { remaining, league: true, label: `정규리그 ${day + 1}경기` });
+      const w = play(c, r, h, a, { remaining, league: true, label: `정규리그 ${day + 1}경기` }, live);
       if (h === c.userId || a === c.userId) {
         const userWon = (w === 0) === (h === c.userId);
         const opp = h === c.userId ? a : h;
@@ -533,16 +580,18 @@ function startPlayoffs(c: Career) {
 
 const STAGE_NAME = { semi: '준플레이오프', po: '플레이오프', final: '챔피언결정전', done: '' };
 
-function playoffTurn(c: Career, r: Rng): string {
+function playoffTurn(c: Career, r: Rng, live?: LiveMatch): string {
   let msg = '';
   for (const po of c.playoffs!) {
     const s = po.series;
     if (!s) continue;
     const homeIsHi = s.game % 2 === 0;
     const h = homeIsHi ? s.hi : s.lo, a = homeIsHi ? s.lo : s.hi;
-    for (const id of [h, a]) for (const p of c.world.clubs[id].roster) p.energy = Math.min(100, p.energy + 30);
+    const isLive = !!live?.result && live.home === h && live.away === a;
+    // a live match already got its rest when it started
+    if (!isLive) for (const id of [h, a]) for (const p of c.world.clubs[id].roster) p.energy = Math.min(100, p.energy + 30);
     const label = `${STAGE_NAME[po.stage]} ${s.game + 1}차전`;
-    const w = play(c, r, h, a, { remaining: 0, league: false, label });
+    const w = play(c, r, h, a, { remaining: 0, league: false, label }, live);
     const winner = w === 0 ? h : a;
     s.w[winner === s.hi ? 0 : 1]++;
     s.game++;
@@ -864,9 +913,12 @@ export function nextFixture(c: Career): { opp: number; home: boolean; label: str
 
 /** What the analysis room reveals of an opponent's tactic (GDD 11.3) */
 export function scoutTactic(c: Career, opp: number): (string | null)[] {
-  const t = aiTactic(buildTeam(c.world.clubs[opp]).starters);
+  const t = clubTactic(c, opp);
   const lvl = userClub(c).facilities.analysis;
-  const vals = [DIST_TXT[t.distribution], TEMPO_TXT[t.tempo], SERVE_TXT[t.serve], BLOCK_TXT[t.block], `${DEF_TXT[t.defense]} · ${t.reception}인 리시브`];
+  const vals = [
+    `${DIST_TXT[t.distribution]}${t.trick && t.trick !== 'none' ? ` · ${TRICK_TXT[t.trick]}` : ''}`, TEMPO_TXT[t.tempo],
+    t.serve === 'target' ? `목적타 (${AIM_TXT[t.aim ?? 'weak']})` : SERVE_TXT[t.serve], BLOCK_TXT[t.block], `${DEF_TXT[t.defense]} · ${t.reception}인 리시브`,
+  ];
   return vals.map((v, i) => (i < lvl ? v : null));
 }
 
@@ -875,6 +927,8 @@ export const TEMPO_TXT = { high: '높은 공', fast: '빠른 공' };
 export const SERVE_TXT = { power: '강서브', target: '목적타', safe: '안전' };
 export const BLOCK_TXT = { read: '따라가기', commit: '예측', aceMark: '에이스 마크' };
 export const DEF_TXT = { deep: '강타 대비', tip: '연타 대비' };
+export const AIM_TXT = { weak: '약한 리시버', hitter: '공격수 겨냥', seam: '리시버 사이 틈', short: '짧은 서브' };
+export const TRICK_TXT = { none: '정공법', decoy: '속공 페이크', dump: '세터 투 어택' };
 export const AXES = ['공격 배분', '공격 템포', '서브', '블로킹', '수비'];
 
 export { ovr, budgetOf, payroll, askingSalary, GRADE_RANGE };

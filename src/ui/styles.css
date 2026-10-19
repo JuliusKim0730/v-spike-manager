@@ -357,3 +357,15 @@ select.sel { min-height: 40px; border-radius: 10px; border: 1px solid var(--line
 a.item { color: inherit; text-decoration: none; }
 a.item .chev { width: 20px; height: 20px; color: var(--muted); flex: none; display: flex; }
 a.item .chev svg { width: 100%; height: 100%; }
+
+/* live match: break sheet */
+.rally.note { font-size: 12.5px; color: var(--blue); background: var(--blue-soft); border: 0; padding: 5px 10px; }
+.coach-note { display: flex; flex-direction: column; gap: 2px; border-left: 4px solid var(--blue); background: var(--blue-soft); border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+.coach-note b { color: var(--blue); }
+.coach-note[data-warn] { border-left-color: var(--red); background: var(--red-soft); }
+.coach-note[data-warn] b { color: var(--red); }
+.axis-head { background: none; border: 0; padding: 0; text-align: left; width: 100%; color: inherit; }
+.sub-row { gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.opt-help { font-size: 12.5px; background: var(--surface-2); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.opt-help .good { color: var(--green); }
+.opt-help .weak { color: var(--red); }

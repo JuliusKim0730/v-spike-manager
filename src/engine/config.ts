@@ -71,10 +71,30 @@ export const CFG = {
   defenseDeepVsPower: 1 * TS, defenseDeepVsTip: -6 * TS,
   defenseTipVsPower: -1.5 * TS, defenseTipVsTip: 6 * TS,
 
+  // ── 목적타 구역 (serve 'target' + aim, Julius 2026-10-19) ──
+  /** 'hitter': the aimed outside hitter's first attack loses this many stat points (late approach) */
+  aimHitterCost: 11, aimHitterWeight: 0.8,
+  /** 'seam': between two receivers — strong vs 2-person reception, closed by a 3-person one */
+  seamErr: 0.01, seamVsTwo: 5, seamVsThree: -1.5,
+  /** 'short': short serve in front of the 3 m line — little pressure, but the middle can't run its quick */
+  shortErr: -0.025, shortPressure: -5, shortQuickMul: 0.25, shortFastCut: 1,
+  /** the receivers in front are the ones who run the quick / the fast tempo */
+  shortVsMiddle: 9, shortVsFast: 6,
+
+  // ── set-play tricks ──
+  /** 'decoy' (속공 페이크·시간차): the middle jumps as a decoy; blockers who bite leave the wing open */
+  decoyQuickMul: 0.55, decoySetCost: 0.02,
+  decoyBite: { read: -1.6, commit: 0.9, aceMark: 0.4 }, decoyStatSlope: 0.07, decoyBlockerCut: 0.8,
+  /** 'dump' (세터 투 어택): front-row setter tips the second ball; a tip-ready defense reads it */
+  dumpRate: 0.14, dumpBias: -0.65, dumpVs: { deep: 0.1, tip: -1.6 }, dumpVsRead: -0.25,
+
   // ── in-match coaching ──
   /** a team on a run of 3+ points plays a little better: +step per point beyond 2, capped */
   momentumStep: 2, momentumMax: 6,
   timeoutsPerSet: 2,
+  /** sets 1–4: a technical timeout when the leading team first reaches each score */
+  technicalAt: [8, 16],
+  subsPerSet: 6,
   /** energy a benched player gets back per set */
   benchRecover: 15,
 

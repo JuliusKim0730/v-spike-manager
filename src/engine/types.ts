@@ -27,6 +27,10 @@ export type Tempo = 'high' | 'fast';
 export type ServeTactic = 'power' | 'target' | 'safe';
 export type BlockTactic = 'read' | 'commit' | 'aceMark';
 export type DefenseTactic = 'deep' | 'tip';
+/** 목적타 (serve: 'target') — which part of the receiving court the server aims at */
+export type ServeAim = 'weak' | 'hitter' | 'seam' | 'short';
+/** set-play trick: 속공 페이크(시간차) / 세터 투 어택 */
+export type Trick = 'none' | 'decoy' | 'dump';
 
 export interface Tactic {
   distribution: Distribution;
@@ -35,6 +39,10 @@ export interface Tactic {
   block: BlockTactic;
   defense: DefenseTactic;
   reception: 2 | 3;
+  /** only used when serve is 'target'; older saves lack it (= 'weak') */
+  aim?: ServeAim;
+  /** older saves lack it (= 'none') */
+  trick?: Trick;
 }
 
 export interface Team {
@@ -62,7 +70,18 @@ export interface CoachView {
   /** points the opponent has won in a row */
   oppRun: number;
   timeoutsLeft: number;
+  /** in-set substitutions still allowed (CFG.subsPerSet per set; between-set changes are free) */
+  subsLeft: number;
+  /** this match's line for a player */
+  line(p: Player): PlayerLine;
+  /** the match's seeded random number, so AI choices replay with the seed */
+  rand(): number;
 }
+
+export type BreakKind = 'timeout' | 'technical' | 'set';
+
+/** What a side does in a break: tactic changes and [lineup slot 0–5 or 'L', bench player coming on] */
+export interface BreakPlan { tactic?: Partial<Tactic>; subs?: [number | 'L', Player][] }
 
 /** In-match decisions. The player makes these through the UI; AI clubs use src/coach.ts. */
 export interface Coach {
@@ -74,6 +93,8 @@ export interface Coach {
   inTimeout?(v: CoachView): Partial<Tactic> | void;
   /** before sets 2–5: [lineup slot 0–5 or 'L', bench player coming on] */
   substitutions?(v: CoachView): [number | 'L', Player][];
+  /** any break (timeout by either side, technical timeout, between sets); runs after the hooks above */
+  atBreak?(v: CoachView, kind: BreakKind, calledByMe: boolean): BreakPlan | void;
 }
 
 export type Pass = 'A' | 'B' | 'C';
@@ -105,6 +126,7 @@ export interface MatchResult {
   timeouts: [number, number];
   tacticChanges: [number, number];
   subs: [number, number];
+  technicalTimeouts: number;
 }
 
 export interface TeamTotals {

@@ -83,7 +83,7 @@ export function makePlayer(rng: Rng, position: Position, target: number, name?: 
 }
 
 export const DEFAULT_TACTIC: Tactic = {
-  distribution: 'balanced', tempo: 'high', serve: 'target', block: 'read', defense: 'deep', reception: 3,
+  distribution: 'balanced', tempo: 'high', serve: 'target', block: 'read', defense: 'deep', reception: 3, aim: 'weak', trick: 'none',
 };
 
 export function makeTeam(rng: Rng, name: string, target: number, tactic: Partial<Tactic> = {}): Team {
