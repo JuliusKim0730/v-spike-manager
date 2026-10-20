@@ -17,7 +17,9 @@ import {
   afterMatch, aiTactic, buildTeam, contracts, distressSales, externalFA, fillMinimums, foreigners, growClub,
   invest, learnSkills, needScore, rankDivision, releaseTo, retirements, schedule, settleBooks, transfers, NEED,
 } from '../engine/league/season.ts';
-import type { Club, Facility, Grade, Pro, World } from '../engine/league/types.ts';
+import type { Club, Facility, Grade, Pro, Staff, World } from '../engine/league/types.ts';
+import { defaultStaffCost, effectiveLevel, headCoach, staffCost, upkeepMult } from '../engine/league/staff.ts';
+import { ensureStaff, staffPool } from './staff.ts';
 import { CLUBS, foreignName, koreanName } from './names.ts';
 
 export type PhaseKind =
@@ -60,7 +62,8 @@ export interface News { turn: string; text: string; tone?: 'good' | 'bad' | 'inf
 export interface SeasonSummary { year: number; division: number; rank: number; finish: string; trustAfter: number; balance: number }
 
 export interface Career {
-  version: 1;
+  /** 2 = staff and scout center (2026-10-20) */
+  version: 1 | 2;
   slot: number;
   savedAt: number;
   seed: number;
@@ -94,6 +97,8 @@ export interface Career {
   seasons: SeasonSummary[];
   turnNo: number;
   finishes: Record<number, number>; // last season finish by club (1 = champion)
+  /** staff candidates for the user's club, refreshed every season */
+  staffPool: Staff[];
 }
 
 // ───────────────────────── helpers ─────────────────────────
@@ -174,6 +179,7 @@ export function makeWorld(seed: number): World {
     club.name = CLUBS[club.id].name;
     for (const p of club.roster) p.name = koreanName(r);
   }
+  ensureStaff(w, seed);
   return w;
 }
 
@@ -186,12 +192,12 @@ export function newCareer(o: NewGameOpts): Career {
   user.personality = 'balanced';
   user.cash = 0.15 * budgetOf(user);
   const c: Career = {
-    version: 1, slot: o.slot, savedAt: Date.now(), seed, rng: seed ^ 0xabcdef,
+    version: 2, slot: o.slot, savedAt: Date.now(), seed, rng: seed ^ 0xabcdef,
     ids: { ...ID_SEQ }, world, userId, games: o.games, funding: o.funding,
     phase: { k: 'prep' }, days: [], day: 0,
     tactic: { ...DEFAULT_TACTIC }, preset: 'custom', lineup: [null, null, null, null, null, null, null], autoCoach: true,
     sponsor: null, trust: 50, growthUnits: 0, news: [], lastMatch: null, results: [], playoffs: null, stats: {},
-    awards: [], retiredNews: [], expiring: [], foreignOptions: [], foreignPick: -1, draft: null, seasons: [], turnNo: 1, finishes: {},
+    awards: [], retiredNews: [], expiring: [], foreignOptions: [], foreignPick: -1, draft: null, seasons: [], turnNo: 1, finishes: {}, staffPool: [],
   };
   startSeason(c, true);
   addNews(c, `${user.name} 감독으로 부임했습니다. 목표는 시즌 준비 턴부터 차근차근!`, 'good');
@@ -218,6 +224,7 @@ function startSeason(c: Career, first: boolean) {
   c.phase = { k: 'prep' };
   // ① 시즌 준비: base training
   const r = rngOf(c);
+  c.staffPool = staffPool(w, userClub(c), r);
   for (const club of w.clubs) for (const p of club.roster) p.sense = Math.max(0, p.sense - 2);
   c.growthUnits += 0.8;
   saveRng(c, r);
@@ -330,8 +337,15 @@ export function clubTactic(c: Career, id: number, starters: Pro[] = buildTeam(c.
   return t;
 }
 
-/** What the person's side does when nobody steers it: the assistant coach, or nothing */
-const userAuto = (c: Career) => (c.autoCoach ? assistantCoach : undefined);
+/** What the person's side does when nobody steers it: the assistant coach (needs a B+ head coach to read the game), or nothing */
+const userAuto = (c: Career) => (!c.autoCoach ? undefined : ['S', 'A', 'B'].includes(headCoach(userClub(c))) ? assistantCoach : basicCoach);
+
+/** saves from before staff (version 1) get default staff and a scout center */
+export function migrate(c: Career) {
+  ensureStaff(c.world, c.seed);
+  if (!c.staffPool) { const r = rngOf(c); c.staffPool = staffPool(c.world, userClub(c), r); saveRng(c, r); }
+  c.version = 2;
+}
 
 /** A user match being played live (web app): the generator plus what the turn needs afterwards */
 export interface LiveMatch {
@@ -856,6 +870,7 @@ function finishDraft(c: Career, r: Rng) {
 
 export const FACILITY_NAME: Record<Facility, string> = {
   stadium: '경기장', training: '훈련시설', medical: '의료센터', restaurant: '식당', bus: '구단 버스', analysis: '전력분석실',
+  scout: '스카우트센터',
 };
 export const FACILITY_EFFECT: Record<Facility, (l: number) => string> = {
   stadium: l => `수용 ${RULES.stadiumSeats[l].toLocaleString()}석`,
@@ -864,6 +879,7 @@ export const FACILITY_EFFECT: Record<Facility, (l: number) => string> = {
   restaurant: l => `회복 ×${(0.9 + l * 0.1).toFixed(1)}`,
   bus: l => `원정 소모 +${[15, 10, 7, 4, 2, 0][l]}%`,
   analysis: l => `상대 작전 ${l}/5축 공개`,
+  scout: l => `영입 후보 정보 ${l}/5단계`,
 };
 
 export const upgradeCost = (f: Facility, lvl: number) => (lvl >= 5 ? Infinity : RULES.upgradeBase[lvl + 1] * RULES.facilityWeight[f]);
@@ -884,10 +900,12 @@ export function finance(c: Career) {
   const base = budgetOf(club);
   const sponsor = base * (1 + RULES.sponsorPerf * (1 - 2 * (club.lastRank - 1) / 7));
   const pay = payroll(club);
-  const ops = RULES.opsShare[club.division] * base;
-  const maint = 0.01 * base * Object.values(club.facilities).reduce((a, b) => a + b, 0);
+  // staff salaries are their own line; the ops share no longer covers the default staff
+  const ops = RULES.opsShare[club.division] * base - defaultStaffCost(club.division);
+  const staff = staffCost(club);
+  const maint = 0.01 * base * Object.values(club.facilities).reduce((a, b) => a + b, 0) * upkeepMult(club);
   const camp = [2, 1, 0.5][club.division];
-  return { base, sponsor, pay, ops, maint, camp, projected: sponsor - pay - ops - maint - camp, cash: club.cash };
+  return { base, sponsor, pay, ops, staff, maint, camp, projected: sponsor - pay - ops - staff - maint - camp, cash: club.cash };
 }
 
 /** Next opponent for the match card */
@@ -914,12 +932,23 @@ export function nextFixture(c: Career): { opp: number; home: boolean; label: str
 /** What the analysis room reveals of an opponent's tactic (GDD 11.3) */
 export function scoutTactic(c: Career, opp: number): (string | null)[] {
   const t = clubTactic(c, opp);
-  const lvl = userClub(c).facilities.analysis;
+  const lvl = effectiveLevel(userClub(c), 'analysis');
   const vals = [
     `${DIST_TXT[t.distribution]}${t.trick && t.trick !== 'none' ? ` · ${TRICK_TXT[t.trick]}` : ''}`, TEMPO_TXT[t.tempo],
     t.serve === 'target' ? `목적타 (${AIM_TXT[t.aim ?? 'weak']})` : SERVE_TXT[t.serve], BLOCK_TXT[t.block], `${DEF_TXT[t.defense]} · ${t.reception}인 리시브`,
   ];
   return vals.map((v, i) => (i < lvl ? v : null));
+}
+
+/** Scout center (2026-10-20): how well the user sees free agents, draft prospects and foreigners */
+export const scoutLevel = (c: Career) => effectiveLevel(userClub(c), 'scout');
+const SCOUT_ERR = [15, 11, 8, 5, 2, 0];
+/** draft potential as the scouts see it: off by up to SCOUT_ERR points, the same guess every time */
+export function potEstimate(c: Career, p: Pro): number {
+  let h = c.world.year * 7919;
+  for (const ch of p.id) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  const noise = ((h >>> 0) % 2001) / 1000 - 1;
+  return (p.potPhys + p.potTech) / 2 + noise * SCOUT_ERR[scoutLevel(c)];
 }
 
 export const DIST_TXT = { left: '레프트 중심', right: '라이트 집중', middle: '중앙 활용', balanced: '고른 배분' };

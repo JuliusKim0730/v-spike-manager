@@ -43,8 +43,9 @@ export function createWorld(seed: number): World {
       const [aLo, aHi] = RULES.analysisStart[d];
       const lvl = () => Math.max(0, Math.min(5, rng.int(fLo, fHi)));
       const facilities: Record<Facility, number> = {
-        stadium: lvl(), training: lvl(), medical: lvl(), restaurant: lvl(), bus: lvl(), analysis: rng.int(aLo, aHi),
+        stadium: lvl(), training: lvl(), medical: lvl(), restaurant: lvl(), bus: lvl(), analysis: rng.int(aLo, aHi), scout: 0,
       };
+      facilities.scout = facilities.analysis; // scout center (2026-10-20) starts like the analysis room, no extra draw
       const club: Club = {
         id, name: `${['1부', '2부', '3부'][d]}-${i + 1}`, division: d,
         budgetFactor: 1 + (rng.next() * 2 - 1) * RULES.budgetSpread,
