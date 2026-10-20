@@ -114,6 +114,15 @@ export function FacilityArt({ k, level }: { k: Facility; level: number }) {
         <circle cx={iso(20, 20, 30 + floors * 9).split(',')[0]} cy={iso(20, 20, 30 + floors * 9).split(',')[1]} r="2.5" fill="#ff5050" />
       </>
     ); break;
+    case 'scout': body = (
+      <>
+        <Box x={6} y={10} w={32} d={26} h={12 + floors * 6} top="#eef6ea" left="#7fb36a" right="#5f9450" />
+        <Windows x={6} y={10} d={26} w={32} z0={2} rows={floors} cols={3} color="#e6f7d8" />
+        <Box x={6} y={10} w={32} d={26} h={2} z={12 + floors * 6} top="#2f6b3a" left="#255a2f" right="#1d4a26" />
+        <circle cx={iso(22, 23, 24 + floors * 6).split(',')[0]} cy={iso(22, 23, 24 + floors * 6).split(',')[1]} r="6" fill="#fff" stroke="#1b2540" strokeWidth="2.4" />
+        <line x1={+iso(22, 23, 24 + floors * 6).split(',')[0] + 4} y1={+iso(22, 23, 24 + floors * 6).split(',')[1] + 4} x2={+iso(22, 23, 24 + floors * 6).split(',')[0] + 10} y2={+iso(22, 23, 24 + floors * 6).split(',')[1] + 10} stroke="#1b2540" strokeWidth="3" strokeLinecap="round" />
+      </>
+    ); break;
     case 'bus': body = (
       <>
         <polygon points={poly([[2, 4, 0.5], [42, 4, 0.5], [42, 40, 0.5], [2, 40, 0.5]])} fill="#8b929e" />

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { isFirstTeam, moveSquad, ovr, releasePlayer, userClub, userTeam, clubColor } from '../game/career.ts';
+import { isFirstTeam, moveSquad, ovr, releasePlayer, scoutLevel, userClub, userTeam, clubColor } from '../game/career.ts';
+import { bestGrade, categoryMult, effectiveLevel, headCoach } from '../engine/league/staff.ts';
 import type { Pro } from '../engine/league/types.ts';
 import type { Position, TechKey } from '../engine/types.ts';
 import { physScore, techScore, TECH_SET, PHYS_KEYS, TECH_KEYS } from '../engine/player.ts';
@@ -10,6 +11,8 @@ import { RULES } from '../engine/league/rules.ts';
 import { SKILL_BY_ID, skillSlots } from '../engine/skills.ts';
 import { Gauges, Grade, Overlay, Ovr, Pos, POS_KO, useGame } from './common.tsx';
 import { Avatar } from './art.tsx';
+
+const gradeTxt = (g: string) => (g === 'none' ? '없음' : `${g}급`);
 
 const ORDER: Position[] = ['S', 'OH', 'OP', 'MB', 'L'];
 
@@ -71,8 +74,10 @@ export function PlayerSheet({ p, onClose }: { p: Pro; onClose(): void }) {
   const mine = p.clubId === c.userId;
   const keys = TECH_SET[p.position];
   const sb = salaryBreakdown(p);
-  const analysis = userClub(c).facilities.analysis;
-  const hidden = !mine && analysis < 3;
+  // free agents are read by the scout center, other clubs' players by the analysis room
+  const fa = p.clubId < 0;
+  const hidden = !mine && (fa ? scoutLevel(c) < 2 : effectiveLevel(userClub(c), 'analysis') < 3);
+  const showPot = mine || (fa && scoutLevel(c) >= 4);
   const stat = (k: string, v: number, key: boolean) => (
     <div key={k} className="statrow"><span>{STAT_KO[k]}</span><div className={`bar ${key ? 'key' : ''}`}><i style={{ width: `${Math.min(100, v)}%` }} /></div><span className="num" style={{ textAlign: 'right', fontSize: 15 }}>{hidden ? '?' : Math.round(v)}</span></div>
   );
@@ -86,7 +91,7 @@ export function PlayerSheet({ p, onClose }: { p: Pro; onClose(): void }) {
         </div>
         <div className="row wrap" style={{ gap: 6 }}>
           <span className="tag">신체 {physScore(p)}</span><span className="tag">기술 {techScore(p)}</span>
-          {mine && <span className="tag blue">잠재 {p.potGrade} · {GROWTH_KO[p.growth]}</span>}
+          {showPot && <span className="tag blue">잠재 {p.potGrade} · {GROWTH_KO[p.growth]}</span>}
           {p.injured > 0 && <span className="tag bad">부상 {p.injured}경기</span>}
           <Gauges p={p} />
         </div>
@@ -96,7 +101,7 @@ export function PlayerSheet({ p, onClose }: { p: Pro; onClose(): void }) {
         {PHYS_KEYS.map(k => stat(k, p.phys[k], false))}
         <h3>기술 <span className="tiny muted">노란 막대 = {POS_KO[p.position]} 기술 4개 (OVR 반영)</span></h3>
         {[...keys, ...TECH_KEYS.filter(k => !keys.includes(k))].map(k => stat(k, p.tech[k], keys.includes(k)))}
-        {hidden && <p className="tiny muted" style={{ margin: 0 }}>전력분석실 3단계부터 다른 팀 선수의 개별 능력치가 보입니다.</p>}
+        {hidden && <p className="tiny muted" style={{ margin: 0 }}>{fa ? '스카우트센터 효과 2단계부터 FA 선수의 개별 능력치가 보입니다.' : '전력분석실 효과 3단계부터 다른 팀 선수의 개별 능력치가 보입니다.'}</p>}
       </section>
       {mine && !p.foreign && <TrainPicker p={p} />}
       <section className="card">
@@ -140,6 +145,7 @@ function TrainPicker({ p }: { p: Pro }) {
   const { refresh, c } = useGame();
   const club = userClub(c);
   const env = clubGrowthMult(club), play = playMult(club, p);
+  const head = headCoach(club), cat = categoryMult(club);
   const playTxt = p.injured > 0 ? '부상' : club.roster.indexOf(p) >= 14 ? '2군' : play >= 1 ? '주전' : play >= 0.85 ? '로테이션' : '벤치';
   const plan = p.train ?? 'integrated';
   const kind = typeof plan === 'object' ? 'focus' : plan;
@@ -148,7 +154,7 @@ function TrainPicker({ p }: { p: Pro }) {
   return (
     <section className="card">
       <div className="row between"><h3>훈련 방식</h3><span className="tag purple">성장 속도 {Math.round(env * play * 100)}%</span></div>
-      <span className="tiny muted">최고 조건(1군 주전 · 훈련시설 5단계 · S급 코치) = 100%. 지금: 시설 {Math.round(RULES.trainingMult[club.facilities.training] * 100)}% × 코치 {club.coach ?? RULES.defaultCoach[club.division]}급 {Math.round(RULES.coachMult[club.coach ?? RULES.defaultCoach[club.division]] * 100)}% × 출전({playTxt}) {Math.round(play * 100)}%</span>
+      <span className="tiny muted">최고 조건(1군 주전 · 훈련시설 5단계 · S급 코치진) = 100%. 지금: 시설 {Math.round(RULES.trainingMult[club.facilities.training] * 100)}% × 수석코치 {gradeTxt(head)} {Math.round(RULES.coachMult[head] * 100)}% × 출전({playTxt}) {Math.round(play * 100)}% · 신체 능력치 ×{cat.phys.toFixed(2)} (신체코치 {gradeTxt(bestGrade(club, 'physical'))}) · 기술 능력치 ×{cat.tech.toFixed(2)} (기술코치 {gradeTxt(bestGrade(club, 'technical'))})</span>
       <div className="seg">
         {PLANS.map(([k, n]) => <button key={k} aria-pressed={kind === k} onClick={() => set((k === 'focus' ? { focus: focusKey } : k) as TrainMode)}>{n}</button>)}
       </div>

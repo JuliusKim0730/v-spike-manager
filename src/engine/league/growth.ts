@@ -58,7 +58,8 @@ function targetsOf(p: Pro, mode: TrainMode): Target[] {
  * Category sums stay under 4 × that category's potential (GDD 6.3); GP that can't be used there
  * spills over to integrated training so it is not lost.
  */
-export function spendGP(p: Pro, gp: number, mode: TrainMode) {
+/** `cat` scales what each GP buys in physical / skill stats (physical and skill coaches) */
+export function spendGP(p: Pro, gp: number, mode: TrainMode, cat = { phys: 1, tech: 1 }) {
   const techSet = TECH_SET[p.position];
   const val = (t: Target) => (t.phys ? p.phys[t.k as PhysKey] : p.tech[t.k as TechKey]);
   const add = (t: Target, d: number) => {
@@ -81,7 +82,7 @@ export function spendGP(p: Pro, gp: number, mode: TrainMode) {
     const techAvg = techSet.reduce((a, k) => a + p.tech[k], 0) / 4;
     for (const t of open) {
       const share = use * val(t) / total;
-      const gain = Math.min(share / avgBrake(val(t), t.phys ? physAvg : techAvg), room(t.phys));
+      const gain = Math.min(share * (t.phys ? cat.phys : cat.tech) / avgBrake(val(t), t.phys ? physAvg : techAvg), room(t.phys));
       if (gain > 0) add(t, gain);
     }
     gp -= use;
