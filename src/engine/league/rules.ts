@@ -67,7 +67,7 @@ export const RULES = {
    */
   trainingMult: [0.55, 0.64, 0.73, 0.82, 0.91, 1.0],
   coachMult: { S: 1.0, A: 0.88, B: 0.77, C: 0.69, none: 0.6 } as Record<string, number>,
-  /** until the staff system exists, each division's clubs have this coach grade */
+  /** head coach grade of clubs without staff (balance sim) and of the default staff */
   defaultCoach: ['A', 'B', 'C'] as string[],
   /** share of the segment's matches started: ≥70% / 30–70% / <30%; 2군 (roster slot 15+) and injured */
   playMult: { regular: 1.0, rotation: 0.85, bench: 0.7, reserve: 0.55, injured: 0.3 },
@@ -76,7 +76,7 @@ export const RULES = {
   medicalMult: [1.15, 1.0, 0.92, 0.85, 0.77, 0.7],
   stadiumSeats: [1000, 2000, 3500, 5000, 6500, 8000],
   upgradeBase: [0, 1, 2, 4, 7, 12],
-  facilityWeight: { stadium: 2, training: 1.2, medical: 1, restaurant: 0.6, bus: 0.5, analysis: 1 } as Record<Facility, number>,
+  facilityWeight: { stadium: 2, training: 1.2, medical: 1, restaurant: 0.6, bus: 0.5, analysis: 1, scout: 0.8 } as Record<Facility, number>,
 
   // GDD 12.3 — revenue
   ticketPrice: [0.00015, 0.0001, 0.00007], // 억 per seat (1.5만 / 1만 / 0.7만 원)
