@@ -52,7 +52,13 @@ export interface MatchOptions {
 }
 
 /** A point was played. `lines` = the log lines since the previous event. */
-export interface PointEvent { type: 'point'; setNo: number; score: [number, number]; winner: 0 | 1; lines: string[] }
+export interface PointEvent {
+  type: 'point'; setNo: number; score: [number, number]; winner: 0 | 1; lines: string[];
+  /** both sides' tactics after this point, so the person can watch the opponent change plans */
+  tactics: [Tactic, Tactic];
+  /** the winner's run of points */
+  run: number;
+}
 /** Play stops for a break; the manual side answers with a BreakInput. */
 export interface BreakEvent {
   type: 'break'; kind: BreakKind;
@@ -65,7 +71,7 @@ export interface BreakEvent {
   oppTactic: Tactic;
 }
 export type MatchEvent = PointEvent | BreakEvent;
-/** after a point: call a timeout. In a break: the plan. Either: hand the rest of the match to a coach. */
+/** after a point: call a timeout and/or signal a tactic change from the bench (applies from the next rally). In a break: the plan. Either: hand the rest of the match to a coach. */
 export interface StepInput extends BreakPlan { timeout?: boolean; auto?: Coach | 'none' }
 
 export function playMatch(teams: [Team, Team], opts: MatchOptions): MatchResult {
@@ -427,9 +433,15 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
       const over = (score[0] >= target || score[1] >= target) && Math.abs(score[0] - score[1]) >= 2;
       let caller: 0 | 1 | undefined;
       if (manual !== undefined) {
-        const inp = yield { type: 'point', setNo, score: [score[0], score[1]], winner: w, lines: flush() };
+        const inp = yield {
+          type: 'point', setNo, score: [score[0], score[1]], winner: w, lines: flush(),
+          tactics: [{ ...courts[0].team.tactic }, { ...courts[1].team.tactic }], run: run[w],
+        };
         if (inp?.auto) takeOver(inp.auto);
-        else if (inp?.timeout && toLeft[manual] > 0) caller = manual;
+        else {
+          if (inp?.tactic) applyTactic(manual, inp.tactic, '벤치 지시');
+          if (inp?.timeout && toLeft[manual] > 0) caller = manual;
+        }
       }
       if (over) break;
       // technical timeout: sets 1–4, the first time the leading team reaches 8 and 16

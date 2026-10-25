@@ -14,14 +14,14 @@ import type { Position } from '../engine/types.ts';
 import { Crest, Game, Grade, Icon, money, Overlay, Ovr, Pos, POS_KO, useGame, type GameApi, type Tab } from './common.tsx';
 import { Roster, PlayerSheet } from './Roster.tsx';
 import { Tactics } from './Tactics.tsx';
-import { LiveMatchView, MatchView } from './Match.tsx';
+import { LiveMatchView, MatchView, type LiveMode } from './Match.tsx';
 
 export function RookieShell({ career, onQuit }: { career: Career; onQuit(): void }) {
   const [, setV] = useState(0);
   const [tab, setTab] = useState<Tab>('home');
   const [toastMsg, setToast] = useState<string | null>(null);
   const [match, setMatch] = useState<number | 'end' | false>(false);
-  const [live, setLive] = useState<{ m: LiveMatch; speed: number } | null>(null);
+  const [live, setLive] = useState<{ m: LiveMatch; speed: number; mode: LiveMode } | null>(null);
   const [player, setPlayer] = useState<Pro | null>(null);
   const [market, setMarket] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -40,7 +40,7 @@ export function RookieShell({ career, onQuit }: { career: Career; onQuit(): void
   const api: GameApi = {
     c, refresh, toast, busy, setTab, quit: onQuit,
     openMatch: (speed?: number) => setMatch(speed ?? 0),
-    openLive: (speed: number) => { const m = rookieStartLive(c); if (m) setLive({ m, speed }); },
+    openLive: (speed: number, mode: LiveMode = 'full') => { const m = rookieStartLive(c); if (m) setLive({ m, speed, mode }); },
     openPlayer: p => setPlayer(p),
     openMarket: () => setMarket(true),
     run: fn => { setBusy(true); window.setTimeout(() => { try { fn(); } finally { setBusy(false); refresh(); } }, 30); },
@@ -65,7 +65,7 @@ export function RookieShell({ career, onQuit }: { career: Career; onQuit(): void
         </nav>
       </div>
       {match !== false && c.lastMatch && <MatchView report={c.lastMatch} speed={match === 'end' ? 0 : match} atEnd={match === 'end'} onClose={() => setMatch(false)} />}
-      {live && <LiveMatchView live={live.m} speed={live.speed} onDone={() => {
+      {live && <LiveMatchView live={live.m} speed={live.speed} mode={live.mode} onDone={() => {
         const m = rookieAdvance(c, { live: live.m });
         setLive(null);
         refresh();
@@ -339,10 +339,11 @@ function MatchCard() {
       <button className="btn go block" onClick={() => setPre(true)}><Icon name="play" />경기 준비</button>
       {pre && (
         <Overlay title={`${f.label} · 경기 정보`} onClose={() => setPre(false)} footer={<>
-          <button className="btn blue3d" disabled={busy} onClick={() => { setPre(false); g.openLive(0); }}><Icon name="play" />직접 지휘</button>
-          <button className="btn orange" disabled={busy} onClick={() => { setPre(false); g.openLive(2); }}><Icon name="bolt" />빠른 지휘</button>
-          <button className="btn red" disabled={busy} onClick={() => { setPre(false); quick(); }}>결과만</button>
+          <button className="btn blue3d" disabled={busy} onClick={() => { setPre(false); g.openLive(0); }}><Icon name="play" />풀 중계</button>
+          <button className="btn orange" disabled={busy} onClick={() => { setPre(false); g.openLive(0, 'highlight'); }}><Icon name="bolt" />하이라이트</button>
+          <button className="btn red" disabled={busy} onClick={() => { setPre(false); quick(); }}>자동 진행</button>
         </>}>
+          <p className="tiny muted" style={{ margin: 0 }}>풀 중계 = 모든 랠리를 보며 언제든 작전 지시 · 하이라이트 = 주요 장면만, 작전 타임에만 변경 · 자동 진행 = 코치에게 맡기고 결과만.</p>
           <section className="card">
             <h2>이기면 · 지면</h2>
             <p className="small" style={{ margin: 0 }}>{oo > our ? `우리보다 ${(oo - our).toFixed(1)} 강한 상대. 이기면 큰 점수, 져도 감점이 작습니다.` : `우리보다 약한 상대. 이겨도 점수가 작고, 지면 크게 깎입니다.`} 풀세트 접전은 이기든 지든 시청률이 크게 오르고, 0:3 완패는 시청률이 떨어집니다.</p>

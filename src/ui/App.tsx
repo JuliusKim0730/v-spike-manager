@@ -11,7 +11,7 @@ import { Roster, PlayerSheet } from './Roster.tsx';
 import { Tactics } from './Tactics.tsx';
 import { Standings } from './Standings.tsx';
 import { Club, Market } from './Club.tsx';
-import { LiveMatchView, MatchView } from './Match.tsx';
+import { LiveMatchView, MatchView, type LiveMode } from './Match.tsx';
 import { Credits } from './Credits.tsx';
 import { RookieShell } from './Rookie.tsx';
 import { RookieSetup } from './RookieSetup.tsx';
@@ -143,7 +143,7 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
   const [tab, setTab] = useState<Tab>('home');
   const [toastMsg, setToast] = useState<string | null>(null);
   const [match, setMatch] = useState<number | 'end' | false>(false);
-  const [live, setLive] = useState<{ m: LiveMatch; speed: number } | null>(null);
+  const [live, setLive] = useState<{ m: LiveMatch; speed: number; mode: LiveMode } | null>(null);
   const [player, setPlayer] = useState<Pro | null>(null);
   const [market, setMarket] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -165,7 +165,7 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
   const api: GameApi = {
     c, refresh, toast, busy, setTab, quit: onQuit,
     openMatch: (speed?: number) => setMatch(speed ?? 0),
-    openLive: (speed: number) => { const m = startLive(c); if (m) setLive({ m, speed }); },
+    openLive: (speed: number, mode: LiveMode = 'full') => { const m = startLive(c); if (m) setLive({ m, speed, mode }); },
     openPlayer: p => setPlayer(p),
     openMarket: () => setMarket(true),
     run: fn => { setBusy(true); window.setTimeout(() => { try { fn(); } finally { setBusy(false); refresh(); } }, 30); },
@@ -190,7 +190,7 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
         </nav>
       </div>
       {match !== false && c.lastMatch && <MatchView report={c.lastMatch} speed={match === 'end' ? 0 : match} atEnd={match === 'end'} onClose={() => setMatch(false)} />}
-      {live && <LiveMatchView live={live.m} speed={live.speed} onDone={() => {
+      {live && <LiveMatchView live={live.m} speed={live.speed} mode={live.mode} onDone={() => {
         const m = advance(c, { live: live.m });
         setLive(null);
         refresh();
