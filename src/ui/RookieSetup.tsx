@@ -3,15 +3,24 @@ import { useMemo, useState } from 'react';
 import type { Career } from '../game/career.ts';
 import { newRookie, STAFF_LIMIT, STAFF_ROLE, staffCheck, staffPool, type Staff, type StaffRole } from '../game/rookie.ts';
 import { slotInfo, SLOTS } from '../game/storage.ts';
-import { CrestArt } from './art.tsx';
+import { CrestArt, TitleScene } from './art.tsx';
 import { Icon } from './common.tsx';
+
+/** 인트로 (Julius 2026-10-25): 은퇴한 레전드 K가 방송사의 제의를 받는다 */
+const STORY: string[] = [
+  '은퇴한 전설적인 여자배구 선수, K.',
+  '코트를 떠난 지 몇 해가 지난 어느 날, 한 방송사에서 연락이 온다.\n"8번째 구단 창단에 도전하는 팀의 감독을 맡아 주시겠어요?"',
+  '그녀는 자신이 사랑하는 여자배구가 다시 흥행하기를 바랐다.\n그리고 충분한 기량이 있는데도 기회를 받지 못하는 후배들이 늘 마음에 걸렸다.',
+  '그래서 K는 제의를 받아들인다.\n63일. 7번의 경기. 이제 감독 K의 이야기가 시작된다.',
+];
 
 const COLORS = ['#f8731c', '#7c5cff', '#1e6fe8', '#e2384d', '#1f9d55', '#0aa5c9', '#e0559b', '#4b5563'];
 
 export function RookieSetup({ onBack, onStart }: { onBack(): void; onStart(c: Career): void }) {
   const [seed] = useState(() => Math.floor(Math.random() * 2 ** 31));
   const pool = useMemo(() => staffPool(seed), [seed]);
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [page, setPage] = useState(0);
   const [name, setName] = useState('서울 언더독스');
   const [short, setShort] = useState('언더독스');
   const [color, setColor] = useState(COLORS[0]);
@@ -25,6 +34,20 @@ export function RookieSetup({ onBack, onStart }: { onBack(): void; onStart(c: Ca
     setHired(same?.id === s.id ? hired.filter(h => h !== same) : [...hired.filter(h => h.role !== s.role), s]);
   };
   const okName = name.trim().length >= 2 && short.trim().length >= 1;
+  if (step === 0) {
+    const last = page === STORY.length - 1;
+    return (
+      <div className="title-wrap story" onClick={() => (last ? setStep(1) : setPage(page + 1))}>
+        <div className="title-scene"><TitleScene /></div>
+        <div className="story-body gutter">
+          <button className="story-skip" onClick={e => { e.stopPropagation(); setStep(1); }}>건너뛰기</button>
+          <p key={page} className="story-text">{STORY[page]}</p>
+          <div className="story-dots" aria-hidden="true">{STORY.map((_, i) => <i key={i} className={i === page ? 'on' : ''} />)}</div>
+          <span className="story-next">{last ? '탭해서 시작하기' : '탭해서 계속'}</span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="app">
       <div className="subbar gutter">

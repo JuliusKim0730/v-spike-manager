@@ -382,3 +382,13 @@ a.item .chev svg { width: 100%; height: 100%; }
 .rbar { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 2px; }
 .rbar i { display: block; width: 100%; max-width: 28px; border-radius: 6px 6px 2px 2px; background: var(--purple); min-height: 3px; }
 .nav button:disabled { opacity: .35; }
+.story { cursor: pointer; }
+.story-body { position: relative; z-index: 1; min-height: 100dvh; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; padding-bottom: calc(40px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(to bottom, transparent 30%, rgb(10 12 24 / .82) 70%); color: #fff; }
+.story-text { margin: 0; font-size: 19px; line-height: 1.65; font-weight: 700; white-space: pre-line; text-shadow: 0 1px 4px rgb(0 0 0 / .6); animation: storyIn .6s ease both; }
+@keyframes storyIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .story-text { animation: none; } }
+.story-dots { display: flex; gap: 6px; }
+.story-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgb(255 255 255 / .35); }
+.story-dots i.on { background: #fff; }
+.story-next { font-size: 13px; opacity: .8; }
+.story-skip { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 14px); right: 16px; background: rgb(0 0 0 / .35); color: #fff; border: 1px solid rgb(255 255 255 / .4); border-radius: 99px; padding: 6px 14px; font-size: 13px; font-weight: 700; }
