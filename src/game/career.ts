@@ -20,6 +20,7 @@ import {
 import type { Club, Facility, Grade, Pro, World } from '../engine/league/types.ts';
 import { CLUBS, clubInfo, foreignName, koreanName, type ClubInfo } from './names.ts';
 import type { RookieState } from './rookie.ts';
+import { diffReport, snapshot, type Snapshot, type TurnReport } from './report.ts';
 
 export type PhaseKind =
   | 'prep' | 'camp' | 'free' | 'sponsor'
@@ -100,7 +101,13 @@ export interface Career {
   rookie?: RookieState;
   /** club names for this save (신인감독모드 has its own 24 clubs) */
   names?: ClubInfo[];
+  /** what the last action changed for each player (행동 리포트) */
+  report?: TurnReport | null;
+  /** 추천 모드: pre-match tactic recommendations (옵션, default on) */
+  recommend?: boolean;
 }
+
+export const recommendOn = (c: Career) => c.recommend !== false;
 
 // ───────────────────────── helpers ─────────────────────────
 
@@ -247,8 +254,10 @@ export function userTeam(c: Career): { team: Team; starters: Pro[] } {
     if (chosen[i]) continue;
     const a = autoSlots[i];
     if (a && !used.has(a.id)) { chosen[i] = a; used.add(a.id); continue; }
+    // a thin squad (신인감독모드 tryout) may have to play someone carrying a knock
     const alt = club.roster.filter(p => !used.has(p.id) && p.injured === 0)
-      .sort((x, y) => (y.position === SLOT_POS[i] ? 100 : 0) + ovr(y) - (x.position === SLOT_POS[i] ? 100 : 0) - ovr(x))[0];
+      .sort((x, y) => (y.position === SLOT_POS[i] ? 100 : 0) + ovr(y) - (x.position === SLOT_POS[i] ? 100 : 0) - ovr(x))[0]
+      ?? club.roster.filter(p => !used.has(p.id)).sort((x, y) => x.injured - y.injured)[0];
     chosen[i] = alt; used.add(alt.id);
   }
   const lineup = chosen.slice(0, 6) as Player[];
@@ -345,6 +354,8 @@ export interface LiveMatch {
   home: number; away: number; userSide: 0 | 1; label: string;
   th: { team: Team; starters: Pro[] }; ta: { team: Team; starters: Pro[] };
   result?: MatchResult;
+  /** the squad before the match, for the 행동 리포트 */
+  before?: Snapshot;
 }
 
 /**
@@ -359,12 +370,13 @@ export function startLive(c: Career): LiveMatch | null {
   const r = rngOf(c);
   const seed = r.int(1, 2 ** 31);
   saveRng(c, r);
+  const before = snapshot(userClub(c), c.growthUnits);
   const th = teamFor(c, h), ta = teamFor(c, a);
   const userSide: 0 | 1 = h === c.userId ? 0 : 1;
   const coaches: [typeof aiCoach | undefined, typeof aiCoach | undefined] = [aiCoach, aiCoach];
   coaches[userSide] = userAuto(c);
   const steps = matchSteps([th.team, ta.team], { seed, log: true, homeTeam: 0, manual: userSide, coaches });
-  return { steps, home: h, away: a, userSide, label: f.label, th, ta };
+  return { steps, home: h, away: a, userSide, label: f.label, th, ta, before };
 }
 
 /** Play one match between two clubs; the user's own match gets a full report */
@@ -425,7 +437,18 @@ function aiFreeTurn(club: Club) {
 export interface AdvanceInput { free?: FreeChoice; sponsor?: 'parent' | 'naming'; live?: LiveMatch }
 
 /** Finish the current turn and enter the next one. Returns a short result line for the UI. */
+const FREE_KO: Record<FreeChoice, string> = { practice: '연습경기', train: '훈련', rest: '휴식' };
+
 export function advance(c: Career, input: AdvanceInput = {}): string | void {
+  const before = input.live?.before ?? snapshot(userClub(c), c.growthUnits);
+  const k = c.phase.k;
+  const title = k === 'free' ? `${phaseLabel(c)} · ${FREE_KO[input.free ?? 'train']}` : (k === 'match' || k === 'playoff') && nextFixture(c) ? nextFixture(c)!.label : phaseLabel(c);
+  const msg = advanceTurn(c, input);
+  c.report = diffReport(before, userClub(c), title, msg || undefined, c.growthUnits);
+  return msg;
+}
+
+function advanceTurn(c: Career, input: AdvanceInput): string | void {
   const r = rngOf(c);
   const club = userClub(c);
   const ai = c.world.clubs.filter(x => x.id !== c.userId);
@@ -923,8 +946,19 @@ export function nextFixture(c: Career): { opp: number; home: boolean; label: str
 
 /** What the analysis room reveals of an opponent's tactic (GDD 11.3) */
 export function scoutTactic(c: Career, opp: number): (string | null)[] {
-  const t = clubTactic(c, opp);
-  const lvl = userClub(c).facilities.analysis;
+  return scoutText(clubTactic(c, opp), userClub(c).facilities.analysis);
+}
+
+/** the scouted axes as values (추천 모드): index = AXES order, revealed up to the analysis level */
+export function knownTactic(t: Tactic, lvl: number): Partial<Tactic> {
+  const groups: (keyof Tactic)[][] = [['distribution', 'trick'], ['tempo'], ['serve', 'aim'], ['block'], ['defense', 'reception']];
+  const out: Partial<Tactic> = {};
+  groups.slice(0, lvl).flat().forEach(k => { (out as Record<string, unknown>)[k] = t[k] ?? (k === 'aim' ? 'weak' : k === 'trick' ? 'none' : undefined); });
+  return out;
+}
+export const scoutKnown = (c: Career, opp: number) => knownTactic(clubTactic(c, opp), userClub(c).facilities.analysis);
+
+export function scoutText(t: Tactic, lvl: number): (string | null)[] {
   const vals = [
     `${DIST_TXT[t.distribution]}${t.trick && t.trick !== 'none' ? ` · ${TRICK_TXT[t.trick]}` : ''}`, TEMPO_TXT[t.tempo],
     t.serve === 'target' ? `목적타 (${AIM_TXT[t.aim ?? 'weak']})` : SERVE_TXT[t.serve], BLOCK_TXT[t.block], `${DEF_TXT[t.defense]} · ${t.reception}인 리시브`,

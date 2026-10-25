@@ -49,6 +49,11 @@ export interface MatchOptions {
   coaches?: [Coach | undefined, Coach | undefined];
   /** side the person controls through matchSteps: every point and break is yielded to them */
   manual?: 0 | 1;
+  /**
+   * 신인감독모드 (Julius 2026-10-25: 작전 성공을 좀 더 잘할 수 있게, 우리도 상대도): scales what a well-chosen
+   * tactic earns (counters, set plays, serve aims) for both sides; the costs stay as they are. 1 = normal.
+   */
+  tacticBoost?: number;
 }
 
 /** A point was played. `lines` = the log lines since the previous event. */
@@ -58,6 +63,8 @@ export interface PointEvent {
   tactics: [Tactic, Tactic];
   /** the winner's run of points */
   run: number;
+  /** live player lines so far (the match's own map: read it, don't keep it) */
+  box: Map<string, PlayerLine>;
 }
 /** Play stops for a break; the manual side answers with a BreakInput. */
 export interface BreakEvent {
@@ -69,6 +76,7 @@ export interface BreakEvent {
   view: CoachView;
   /** the tactic the opponent has been playing up to this break (they may change it now too) */
   oppTactic: Tactic;
+  box: Map<string, PlayerLine>;
 }
 export type MatchEvent = PointEvent | BreakEvent;
 /** after a point: call a timeout and/or signal a tactic change from the bench (applies from the next rally). In a break: the plan. Either: hand the rest of the match to a coach. */
@@ -87,6 +95,11 @@ export function playMatch(teams: [Team, Team], opts: MatchOptions): MatchResult 
  */
 export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<MatchEvent, MatchResult, StepInput | undefined> {
   const rng = new Rng(opts.seed);
+  const TB = opts.tacticBoost ?? 1;
+  /** a tactic's payoff, scaled by tacticBoost */
+  const pay = (v: number) => v * TB;
+  /** plays that worked because of a tactic (set play fooled them, aimed serve ace, marked block…), per side */
+  const tacticHits: [number, number] = [0, 0];
   const lines = new Map<string, PlayerLine>();
   const line = (p: Player) => {
     let l = lines.get(p.id);
@@ -185,7 +198,7 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
 
   /** Returns the rally winner side relative to the attacking team: 'att' | 'def' | 'cont' (dug, rally continues) */
   function resolveAttack(attC: Court, defC: Court, a: Attack, setQ: number, pass: Pass, attServing: boolean, fromServe: boolean, setter: Player, first?: FirstBall):
-    { result: 'kill' | 'error' | 'stuff' | 'dug'; digQ?: number; blocker?: Player; digger?: Player; bit?: boolean } {
+    { result: 'kill' | 'error' | 'stuff' | 'dug'; digQ?: number; blocker?: Player; digger?: Player; bit?: boolean; read?: string } {
     const at = attC.team.tactic;
     const dt = defC.team.tactic;
     const h = a.hitter;
@@ -193,7 +206,7 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
     let A = 0.7 * stat + 0.3 * physEff(h, 'jump') + (h.height - 180) * 0.6 + (setQ - 0.8) * 40;
     if (h.skills.includes('aceInstinct') && clutch) A += 8;
     if (fromServe && at.reception === 3 && roleOf(attC.team, h) === 'OH') A -= CFG.threeRecvAttackCost / K;
-    if (fromServe && first?.aimed === h) A -= CFG.aimHitterCost;
+    if (fromServe && first?.aimed === h) A -= pay(CFG.aimHitterCost);
     A += mom(sideOf(attC));
     const defMom = mom(sideOf(defC));
 
@@ -201,11 +214,13 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
     const defSix = onCourt(defC, !attServing);
     const front = defSix.filter(s => isFront(s.pos)).map(s => s.p);
     let n = a.kind === 'quick' ? 1.1 : pass === 'C' || at.tempo === 'high' ? 2.3 : 1.7;
-    if (at.tempo === 'fast' && a.kind !== 'quick' && pass !== 'C') n -= CFG.tempoFastBlockerCut;
+    if (at.tempo === 'fast' && a.kind !== 'quick' && pass !== 'C') n -= pay(CFG.tempoFastBlockerCut);
     if (a.kind === 'back') n -= 0.3;
     let blockAdj = 0;
+    /** what the defense's block plan read right, for the play-by-play */
+    let read: string | undefined;
     if (dt.block === 'commit') {
-      if (a.kind === 'quick') { blockAdj += CFG.commitVsQuick; n += 0.6; }
+      if (a.kind === 'quick') { blockAdj += pay(CFG.commitVsQuick); n += 0.6; read = '예측 블로킹 적중'; }
       else { blockAdj += CFG.commitVsWing; n -= CFG.commitWingBlockerCut; }
     }
     const bp = front.map(b => 0.7 * techEff(b, 'block') + 0.3 * physEff(b, 'jump') + (b.height - 180) * 0.6 + (b.skills.includes('ironWall') ? 10 : 0));
@@ -215,15 +230,15 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
       const mb = onCourt(attC, attServing).find(s => s.role === 'MB' && isFront(s.pos))?.p;
       if (mb) {
         const fool = 0.5 * techEff(setter, 'set') + 0.5 * techEff(mb, 'quick') - front.reduce((x, b) => x + techEff(b, 'block'), 0) / front.length;
-        bit = rng.chance(sigmoid(CFG.decoyBite[dt.block] + fool * CFG.decoyStatSlope));
+        bit = rng.chance(sigmoid(CFG.decoyBite[dt.block] + fool * CFG.decoyStatSlope + (TB - 1) * 1.2));
       }
     }
     if (bit) n -= CFG.decoyBlockerCut;
     if (dt.block === 'aceMark' && !bit) {
       const ace = aceHitter(attC.team);
-      if (ace.id === h.id) { blockAdj += CFG.aceMarkTarget; n += 0.6; } else blockAdj += CFG.aceMarkOther;
+      if (ace.id === h.id) { blockAdj += pay(CFG.aceMarkTarget); n += 0.6; read = '에이스 마크 적중'; } else blockAdj += CFG.aceMarkOther;
     }
-    if (dt.block === 'read' && (pass === 'C' || at.tempo === 'high')) blockAdj += CFG.readVsHigh;
+    if (dt.block === 'read' && (pass === 'C' || at.tempo === 'high')) blockAdj += pay(CFG.readVsHigh);
     n = clamp(n, 0.8, 3);
     const B = bp.reduce((x, y) => x + y, 0) / bp.length + defMom;
 
@@ -239,21 +254,21 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
     if (tip) pStuff *= 0.3;
     pStuff = clamp(pStuff, 0.01, 0.35);
     const blocker = rng.pickWeighted(front, bp.map(v => Math.max(1, v)));
-    if (rng.chance(pStuff)) return { result: 'stuff', blocker };
+    if (rng.chance(pStuff)) return { result: 'stuff', blocker, read };
 
     // 3) defense
     const soft = rng.chance(CFG.softBlockChance);
     const backRow = defSix.filter(s => !isFront(s.pos)).map(s => s.p);
     const digger = rng.pickWeighted(backRow, backRow.map(p => (p === defC.team.libero ? 1.6 : 1)));
     const D = defMom + 0.6 * techEff(digger, 'dig') + 0.2 * physEff(digger, 'agility') + 0.2 * techEff(digger, digger === defC.team.libero ? 'positioning' : 'dig');
-    let defAdj = dt.defense === 'deep' ? (tip ? CFG.defenseDeepVsTip : CFG.defenseDeepVsPower) : (tip ? CFG.defenseTipVsTip : CFG.defenseTipVsPower);
+    let defAdj = dt.defense === 'deep' ? (tip ? CFG.defenseDeepVsTip : pay(CFG.defenseDeepVsPower)) : (tip ? pay(CFG.defenseTipVsTip) : CFG.defenseTipVsPower);
     if (soft) defAdj += CFG.softBlockDig;
     const rel = (A - D) * K - defAdj;
-    const commitCut = dt.block === 'commit' && a.kind === 'quick' ? CFG.commitQuickKillCut : 0;
+    const commitCut = dt.block === 'commit' && a.kind === 'quick' ? pay(CFG.commitQuickKillCut) : 0;
     const pKill = sigmoid(rel / CFG.killScale + (tip ? CFG.tipBias : CFG.killBias) - n * CFG.killPerBlocker - commitCut);
     if (rng.chance(pKill)) return { result: 'kill', bit };
     const digQ = -rel + rng.normal(0, 12);
-    return { result: 'dug', digQ, digger, bit };
+    return { result: 'dug', digQ, digger, bit, read: tip && dt.defense === 'tip' ? '연타 대비 적중' : undefined };
   }
 
   let clutch = false;
@@ -290,9 +305,10 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
     let receiver: Player;
     const first: FirstBall = { short: aim === 'short' };
     const hitters = receivers.filter(p => roleOf(rC.team, p) === 'OH');
-    if (aim === 'weak' && rng.chance(CFG.targetServeAimChance)) {
+    const aimChance = Math.min(0.95, CFG.targetServeAimChance + (TB - 1) * 0.4);
+    if (aim === 'weak' && rng.chance(aimChance)) {
       receiver = receivers.reduce((a, b) => (techEff(b, 'receive') < techEff(a, 'receive') ? b : a));
-    } else if (aim === 'hitter' && hitters.length && rng.chance(CFG.targetServeAimChance)) {
+    } else if (aim === 'hitter' && hitters.length && rng.chance(aimChance)) {
       receiver = hitters.reduce((a, b) => (techEff(b, 'spike') > techEff(a, 'spike') ? b : a));
       first.aimed = receiver;
     } else receiver = receivers[rng.int(0, receivers.length - 1)];
@@ -304,13 +320,16 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
     R += CFG.receptionBonus[reception] / K;
     let aceCut = CFG.recvAceBelow;
     if (serverP.skills.includes('serveBomber')) aceCut += 8;
-    const aimBonus = aim === 'weak' ? (reception === 2 ? CFG.targetVsTwo : 0)
-      : aim === 'seam' ? (reception === 2 ? CFG.seamVsTwo : CFG.seamVsThree)
-      : aim === 'short' ? CFG.shortPressure + (rC.team.tactic.distribution === 'middle' ? CFG.shortVsMiddle : 0) + (rC.team.tactic.tempo === 'fast' ? CFG.shortVsFast : 0) : 0;
-    const targetBonus = aimBonus + (st === 'power' && reception === 2 ? CFG.powerVsTwo : 0);
+    const aimBonus = aim === 'weak' ? (reception === 2 ? pay(CFG.targetVsTwo) : 0)
+      : aim === 'seam' ? (reception === 2 ? pay(CFG.seamVsTwo) : CFG.seamVsThree)
+      : aim === 'short' ? CFG.shortPressure + (rC.team.tactic.distribution === 'middle' ? pay(CFG.shortVsMiddle) : 0) + (rC.team.tactic.tempo === 'fast' ? pay(CFG.shortVsFast) : 0) : 0;
+    const targetBonus = aimBonus + (st === 'power' && reception === 2 ? pay(CFG.powerVsTwo) : 0);
     const q = (R - S) * K - CFG.servePressure[st] - targetBonus + CFG.recvOffset + rng.normal(0, CFG.recvNoise);
     if (q < aceCut) {
       sl.aces++; sTot.aces++; rl.recvAced++; recv[rcv].aced++;
+      // the serve plan found the weakness it was built for
+      const rT = rC.team.tactic;
+      if ((reception === 2 && (st === 'power' || aim === 'weak' || aim === 'seam')) || (aim === 'short' && (rT.distribution === 'middle' || rT.tempo === 'fast')) || (aim === 'hitter' && first.aimed)) tacticHits[server]++;
       say(`${serverP.name} ${aim ? AIM_SAY[aim] : ''}서브 에이스! ${receiver.name} 리시브 실패`);
       return server;
     }
@@ -337,9 +356,10 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
         const back = onCourt(dC, !attServing).filter(s => !isFront(s.pos)).map(s => s.p);
         const D = back.reduce((x, p) => x + techEff(p, 'dig'), 0) / back.length;
         const Sx = 0.5 * techEff(sp, 'set') + 0.3 * physEff(sp, 'agility') + 0.2 * physEff(sp, 'jump') + (sp.height - 175) * 0.4;
-        const pKill = sigmoid((Sx - D) * K / CFG.killScale * 4 + CFG.dumpBias + CFG.dumpVs[dT.defense] + (dT.block === 'read' ? CFG.dumpVsRead : 0));
+        const pKill = sigmoid((Sx - D) * K / CFG.killScale * 4 + CFG.dumpBias + CFG.dumpVs[dT.defense] + (dT.block === 'read' ? CFG.dumpVsRead : 0)
+          + (dT.defense === 'deep' ? (TB - 1) * 0.8 : 0));
         if (rng.chance(pKill)) {
-          sline.kills++; aTot.kills++;
+          sline.kills++; aTot.kills++; tacticHits[att]++;
           say(`${sp.name} 세터 투 어택(패스 페인트) 득점`);
           totals[att].attacksPerRally += attacksThisRally;
           return att;
@@ -368,6 +388,7 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
       const passTxt = pass === 'A' ? '정확한 연결' : pass === 'B' ? '무난한 연결' : '흔들린 연결';
       if (r.result === 'kill') {
         hl.kills++; aTot.kills++;
+        if (r.bit) tacticHits[att]++;
         say(`${passTxt} → ${r.bit ? '속공 페이크에 블로커가 속음 → ' : ''}${atk.hitter.name} ${kindTxt} 득점`);
         totals[att].attacksPerRally += attacksThisRally;
         return att;
@@ -387,7 +408,8 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
         }
         hl.blocked++; aTot.blocked++;
         line(r.blocker!).blocks++; totals[1 - att].blockPoints++;
-        say(`${passTxt} → ${atk.hitter.name} ${kindTxt}, ${r.blocker!.name} 블로킹 득점`);
+        if (r.read) tacticHits[1 - att]++;
+        say(`${passTxt} → ${atk.hitter.name} ${kindTxt}, ${r.blocker!.name} 블로킹 득점${r.read ? ` (${r.read})` : ''}`);
         totals[att].attacksPerRally += attacksThisRally;
         return (1 - att) as 0 | 1;
       }
@@ -396,7 +418,8 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
       const dq = r.digQ!;
       pass = dq > 14 ? 'A' : dq > -2 ? 'B' : 'C';
       setterBusy = r.digger! === dC.team.lineup[0];
-      say(`${atk.hitter.name} ${kindTxt} → ${r.digger!.name} 디그`);
+      if (r.read) tacticHits[1 - att]++;
+      say(`${atk.hitter.name} ${kindTxt} → ${r.digger!.name} 디그${r.read ? ` (${r.read})` : ''}`);
       att = (1 - att) as 0 | 1;
       attServing = att === server;
     }
@@ -435,7 +458,7 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
       if (manual !== undefined) {
         const inp = yield {
           type: 'point', setNo, score: [score[0], score[1]], winner: w, lines: flush(),
-          tactics: [{ ...courts[0].team.tactic }, { ...courts[1].team.tactic }], run: run[w],
+          tactics: [{ ...courts[0].team.tactic }, { ...courts[1].team.tactic }], run: run[w], box: lines,
         };
         if (inp?.auto) takeOver(inp.auto);
         else {
@@ -506,7 +529,7 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
       const me = manual;
       const inp = yield {
         type: 'break', kind, by, setNo, score: [score[0], score[1]], lines: flush(),
-        view: view(me, setNo, score), oppTactic: { ...courts[1 - me].team.tactic },
+        view: view(me, setNo, score), oppTactic: { ...courts[1 - me].team.tactic }, box: lines,
       };
       if (inp?.auto) { takeOver(inp.auto); plans[me] = decide(me, kind, by, setNo, score); }
       else plans[me] = { tactic: inp?.tactic, subs: inp?.subs };
@@ -557,7 +580,7 @@ export function* matchSteps(teams: [Team, Team], opts: MatchOptions): Generator<
   }
 
   if (manual !== undefined) flush();
-  return { sets, winner: setsWon[0] > setsWon[1] ? 0 : 1, setsWon, lines, team: totals, log, timeouts, tacticChanges, subs, technicalTimeouts: technical };
+  return { sets, winner: setsWon[0] > setsWon[1] ? 0 : 1, setsWon, lines, team: totals, log, timeouts, tacticChanges, subs, technicalTimeouts: technical, tacticHits };
 }
 
 /** Korean names of tactic values, for the play-by-play */

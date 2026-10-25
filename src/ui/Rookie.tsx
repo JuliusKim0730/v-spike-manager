@@ -1,17 +1,18 @@
 /** 신인감독모드 screens (design/ROOKIE-MODE.md). Roster, tactics and the match viewer are the career mode's. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Career, LiveMatch } from '../game/career.ts';
-import { clubName, clubShort, ovr, starterAvg, userClub, AXES } from '../game/career.ts';
+import { clubName, clubShort, ovr, starterAvg, userClub, userTeam, AXES } from '../game/career.ts';
 import {
-  autoToMatch, chooseEnding, DEALS, dayKind, dealsWeekly, ECON, estimate, LAST_DAY, LEAGUE_NAME, leagueOf, MATCH_DAYS, MAX_SQUAD,
-  nextMatch, oppOvr, opponentStarters, OVERSEAS_IDS, payrollWeekly, PRACTICE_GROWTH, PRO_IDS, prospects, recruit, rk, rookieAdvance, rookieLabel,
-  rookieScout, rookieStartLive, SCHOOL_IDS, scheduleCheck, scoreTotal, seesPotential, squadFor, STAFF_ROLE, suggestSchedule, TIER_MIN, TIER_TEXT,
-  tierOf, tryoutCheck, tryoutPlayers, USER, type League, type Prospect, type RookieFree,
+  autoToMatch, chooseEnding, condGrowth, DEALS, dayKind, dealsWeekly, ECON, estimate, LAST_DAY, LEAGUE_NAME, leagueOf, MATCH_DAYS, MAX_SQUAD,
+  nextMatch, oppOvr, opponentStarters, OVERSEAS_IDS, payrollWeekly, playTryout, PRACTICE_GROWTH, PRO_IDS, prospects, recruit, rk, rookieAdvance, rookieLabel,
+  rookieScout, rookieScoutKnown, rookieStartLive, SCHOOL_IDS, scheduleCheck, scoreTotal, seesPotential, setTryout, squadFor, STAFF_ROLE, suggestSchedule, TIER_MIN, TIER_TEXT,
+  tierOf, tryoutCheck, tryoutPlayers, TRYOUT_PICK, TRYOUT_POOL, TRYOUT_ROUNDS, USER, type League, type Prospect, type RookieFree, type TryoutSize, type TryStat,
 } from '../game/rookie.ts';
+import { OptionsCard, RecommendPanel, ReportCard } from './Assist.tsx';
 import { saveCareer } from '../game/storage.ts';
 import type { Pro } from '../engine/league/types.ts';
 import type { Position } from '../engine/types.ts';
-import { Crest, Game, Grade, Icon, money, Overlay, Ovr, Pos, POS_KO, useGame, type GameApi, type Tab } from './common.tsx';
+import { Crest, Fold, Game, Grade, Icon, money, Overlay, Ovr, Pos, POS_KO, useGame, type GameApi, type Tab } from './common.tsx';
 import { Roster, PlayerSheet } from './Roster.tsx';
 import { Tactics } from './Tactics.tsx';
 import { LiveMatchView, MatchView, type LiveMode } from './Match.tsx';
@@ -112,6 +113,8 @@ function RookieHome() {
       </div>
       <div className="progress"><div className="track"><i style={{ width: `${pct}%` }} /></div><span>창단 점수 {pts.toFixed(0)}</span></div>
       <Turn />
+      {s.day === 2 && s.tryout?.review && <section className="card"><h2>트라이아웃 결과 · 내 안목</h2><TryoutReview /></section>}
+      <ReportCard />
       <Road />
       {s.weeks.length > 0 && <RatingChart />}
       <section className="card">
@@ -188,6 +191,54 @@ function Turn() {
 const ORDER: Position[] = ['S', 'OH', 'OP', 'MB', 'L'];
 
 function Tryout() {
+  const t = rk(useGame().c).tryout!;
+  return t.stage === 'list' ? <TryoutList /> : <TryoutPick />;
+}
+
+function TryoutSteps({ at }: { at: 0 | 1 | 2 }) {
+  return <div className="tryout-stage">{['① 지원자 명단', '② 6:6 청백전', '③ 합격자 선발'].map((x, i) => <span key={x} data-on={i === at ? '' : undefined}>{x}</span>)}</div>;
+}
+
+/** step 1: who applied (stats hidden), how many to look at and how many scrimmages to watch */
+function TryoutList() {
+  const { c, run, busy, refresh } = useGame();
+  const t = rk(c).tryout!;
+  const [pos, setPos] = useState<'all' | Position>('all');
+  const ps = tryoutPlayers(c);
+  const list = ps.filter(p => pos === 'all' || p.position === pos).sort((a, b) => ORDER.indexOf(a.position) - ORDER.indexOf(b.position));
+  const q = TRYOUT_POOL[t.size];
+  return (
+    <TurnBox ico="📝" title="트라이아웃 · 지원자 명단" desc="경기 전에 지원자부터 확인하세요. 몇 명을 볼지, 청백전을 몇 라운드 볼지 고를 수 있어요. 능력치는 합격 후에 공개됩니다.">
+      <TryoutSteps at={0} />
+      <div className="stack" style={{ gap: 4 }}>
+        <b className="small">지원자 규모</b>
+        <div className="seg">{([12, 24, 36] as TryoutSize[]).map(n => <button key={n} aria-pressed={t.size === n} onClick={() => { setTryout(c, n, t.rounds); refresh(); }}>{n}명</button>)}</div>
+        <span className="tiny muted">{q.label} · {q.desc}</span>
+      </div>
+      <div className="stack" style={{ gap: 4 }}>
+        <b className="small">청백전 (6:6)</b>
+        <div className="seg">{TRYOUT_ROUNDS.map(n => <button key={n} aria-pressed={t.rounds === n} onClick={() => { setTryout(c, t.size, n); refresh(); }}>{n}라운드</button>)}</div>
+        <span className="tiny muted">한 라운드에 {t.size / 12}경기 · 선수마다 {t.rounds}경기씩 뜁니다. 많이 볼수록 기록이 실제 실력에 가까워져요. 각 조는 지원자 6명 + 보조 코치(센터) 1명.</span>
+      </div>
+      <div className="row wrap" style={{ gap: 6 }}>{ORDER.map(p => <span key={p} className="tag">{POS_KO[p]} {ps.filter(x => x.position === p).length}</span>)}</div>
+      <div className="seg light">{(['all', ...ORDER] as const).map(p => <button key={p} aria-pressed={pos === p} onClick={() => setPos(p)}>{p === 'all' ? '전체' : POS_KO[p]}</button>)}</div>
+      <div className="list">
+        {list.map(p => (
+          <div key={p.id} className="item">
+            <Pos p={p.position} />
+            <div className="grow" style={{ minWidth: 0 }}><b>{p.name}</b> <span className="tiny muted">{p.age}세 · {p.height}cm</span><div className="tiny muted">{t.bio[p.id]}</div></div>
+          </div>
+        ))}
+      </div>
+      <button className="btn go block" disabled={busy} onClick={() => run(() => playTryout(c))}>
+        {busy ? <span className="spinner" /> : `청백전 시작 (${(t.size / 12) * t.rounds}경기)`}
+      </button>
+    </TurnBox>
+  );
+}
+
+/** step 3: pick from the scrimmage records */
+function TryoutPick() {
   const { c, run, busy, toast, refresh } = useGame();
   const t = rk(c).tryout!;
   const [pos, setPos] = useState<'all' | Position>('all');
@@ -198,7 +249,9 @@ function Tryout() {
   const count = (p: Position) => ps.filter(x => x.position === p && t.picked.includes(x.id)).length;
   const toggle = (id: string) => { t.picked = t.picked.includes(id) ? t.picked.filter(x => x !== id) : [...t.picked, id]; refresh(); };
   return (
-    <TurnBox ico="📝" title="트라이아웃" desc="지원자 30명이 청백전 6경기를 치렀습니다. 능력치는 모른 채, 경기 기록과 코치 평가만 보고 10~16명을 뽑으세요. ★ = 코치진이 추린 핵심 인력 (미리 선택됨). 합격자의 능력치는 팀 확정 후 공개됩니다.">
+    <TurnBox ico="📝" title="트라이아웃 · 합격자 선발" desc={`지원자 ${t.size}명이 청백전 ${t.games.length}경기를 치렀습니다. 능력치는 모른 채 경기 기록과 코치 평가만 보고 ${TRYOUT_PICK.min}~${TRYOUT_PICK.max}명을 뽑으세요. ★ = 코치진 추천 (미리 선택됨). 확정하면 실제 OVR과 함께 내 안목을 알려드려요.`}>
+      <TryoutSteps at={2} />
+      <Fold title={`청백전 결과 ${t.games.length}경기`}>{t.games.map(g => <div key={g} className="tiny">{g}</div>)}</Fold>
       <div className="row wrap" style={{ gap: 6 }}>
         {ORDER.map(p => <span key={p} className="tag">{POS_KO[p]} {count(p)}</span>)}
         <span className="tag blue">합격 {t.picked.length}명</span>
@@ -208,13 +261,12 @@ function Tryout() {
         {list.map(p => {
           const st = t.stats[p.id];
           const on = t.picked.includes(p.id);
-          const pct = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : '-');
           return (
             <button key={p.id} className="item tryout" aria-pressed={on} onClick={() => toggle(p.id)} style={on ? { background: 'var(--blue-soft)' } : undefined}>
               <Pos p={p.position} />
               <div className="grow" style={{ minWidth: 0 }}>
-                <b>{t.recommended.includes(p.id) && <span className="c-orange">★ </span>}{p.name}</b> <span className="tiny muted">{p.age}세 · {p.height}cm</span>
-                <div className="tiny muted">{st.g}경기 · 득점 {st.pts} · 공격 {pct(st.kills, st.att)} · 리시브 정확 {pct(st.recvA, st.recv)} · 블록 {st.blocks} · 에이스 {st.aces} · 디그 {st.digs}</div>
+                <b>{t.recommended.includes(p.id) && <span className="c-orange">★ </span>}{p.name}</b> <span className="tiny muted">{p.age}세 · {p.height}cm · {t.bio[p.id]}</span>
+                <div className="tiny muted">{tryLine(st)}</div>
               </div>
               <div className="stack" style={{ alignItems: 'center', gap: 2 }}>
                 <span className="tiny muted">작전 수행</span><span className={`grade ${st.exec}`}>{st.exec}</span>
@@ -231,6 +283,41 @@ function Tryout() {
         {busy ? <span className="spinner" /> : '합격자 확정 · 능력치 공개'}
       </button>
     </TurnBox>
+  );
+}
+
+const pct = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : '-');
+const tryLine = (st: TryStat) => `${st.g}경기 ${st.w}승 · 득점 ${st.pts} · 공격 ${pct(st.kills, st.att)} · 리시브 정확 ${pct(st.recvA, st.recv)} · 블록 ${st.blocks} · 에이스 ${st.aces} · 디그 ${st.digs}`;
+
+/** after the confirm: the tryout record next to each signing's real OVR, and how sharp the eye was */
+function TryoutReview() {
+  const { c, openPlayer } = useGame();
+  const t = rk(c).tryout;
+  const rv = t?.review;
+  if (!t || !rv) return null;
+  const club = userClub(c);
+  const ps = club.roster.filter(p => rv.ovr[p.id] !== undefined).sort((a, b) => rv.ovr[b.id] - rv.ovr[a.id]);
+  const ratio = rv.hits / Math.max(1, rv.n);
+  const [word, tone] = ratio >= 0.8 ? ['매의 눈', 'good'] : ratio >= 0.6 ? ['준수한 안목', 'blue'] : ratio >= 0.4 ? ['보통', ''] : ['아쉬운 선택', 'bad'];
+  return (
+    <>
+      <div className="row wrap" style={{ gap: 6 }}>
+        <span className={`tag ${tone}`}>안목 {rv.hits}/{rv.n} · {word}</span>
+        <span className="tag">선발 평균 OVR {rv.avgPicked.toFixed(1)}</span>
+        <span className="tag">최선이었다면 {rv.avgBest.toFixed(1)}</span>
+        <span className="tag">지원자 평균 {rv.avgPool.toFixed(1)}</span>
+      </div>
+      <p className="tiny muted" style={{ margin: 0 }}>안목 = 지원자 {t.ids.length}명 중 실제 OVR 상위 {rv.n}명을 몇 명이나 뽑았는지입니다.</p>
+      <div className="list">
+        {ps.map(p => (
+          <button key={p.id} className="item" onClick={() => openPlayer(p)}>
+            <Pos p={p.position} />
+            <div className="grow" style={{ minWidth: 0 }}><b>{t.recommended.includes(p.id) && <span className="c-orange">★ </span>}{p.name}</b><div className="tiny muted">{t.stats[p.id] ? tryLine(t.stats[p.id]) : ''} · 작전 수행 {t.stats[p.id]?.exec}</div></div>
+            <Ovr v={rv.ovr[p.id]} />
+          </button>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -294,8 +381,18 @@ function FreeDay() {
       <div className="grid3">
         <Kv k="경기감각" v={`${AVG(c, p => p.sense)}`} /><Kv k="컨디션" v={`${AVG(c, p => p.condition)}`} /><Kv k="체력" v={`${AVG(c, p => p.energy)}`} />
       </div>
+      <div className="row wrap" style={{ gap: 6 }}>
+        <span className="tag purple">기세 {Math.round((s.form ?? 0) * 100)}% · 성장 ×{(1 + (s.form ?? 0)).toFixed(2)}</span>
+        <span className="tag">훈련 효율 ×{condGrowth(AVG(c, p => p.condition)).toFixed(2)} (컨디션)</span>
+      </div>
+      <Fold title="성장을 빠르게 하려면">
+        <span className="tiny">· 컨디션 70 이상에서 훈련하면 ×1.25, 50 이상 ×1.1, 35 미만이면 ×0.8. 휴식으로 컨디션을 올린 뒤 훈련하세요.</span>
+        <span className="tiny">· 경기에서 이기고 작전이 적중할수록(속공 페이크·목적타 에이스·마크 블로킹 등) 기세가 쌓여 모든 성장이 최대 1.5배까지 빨라집니다. 기세는 하루에 10%씩 줄어요.</span>
+        <span className="tiny">· 공식전은 주전에게 큰 경험치: 승리 ×1.2, 패배 ×0.7. 연습경기·공식전 모두 작전 적중 1회마다 성장 +1.5% (최대 +40%).</span>
+        <span className="tiny">· 이 모드에서는 양 팀 모두 작전 상성 효과가 1.4배입니다. 상대 작전을 읽고 맞춰 가세요.</span>
+      </Fold>
       <div className="stack">
-        <button className="choice" disabled={busy} onClick={() => step('train')}><b>훈련</b><span>능력치 성장 · 체력 ↓ · 경기감각 소폭 ↓</span></button>
+        <button className="choice" disabled={busy} onClick={() => step('train')}><b>훈련</b><span>능력치 성장 (컨디션·기세가 좋을수록 ↑) · 체력 ↓ · 경기감각 소폭 ↓</span></button>
         <div className="grid3">
           {(['school', 'pro', 'overseas'] as League[]).map(l => (
             <button key={l} className="choice" disabled={busy} onClick={() => step('practice', l)}>
@@ -327,6 +424,7 @@ function MatchCard() {
   const oo = oppOvr(c, f.opp, our);
   const opp = opponentStarters(c, f.opp, f.squad);
   const scout = rookieScout(c, f.opp, f.squad);
+  const known = rookieScoutKnown(c, f.opp, f.squad);
   const quick = () => run(() => { const m = rookieAdvance(c); if (m) toast(m); });
   return (
     <section className="turn" aria-label="이번 턴">
@@ -346,13 +444,14 @@ function MatchCard() {
           <p className="tiny muted" style={{ margin: 0 }}>풀 중계 = 모든 랠리를 보며 언제든 작전 지시 · 하이라이트 = 주요 장면만, 작전 타임에만 변경 · 자동 진행 = 코치에게 맡기고 결과만.</p>
           <section className="card">
             <h2>이기면 · 지면</h2>
-            <p className="small" style={{ margin: 0 }}>{oo > our ? `우리보다 ${(oo - our).toFixed(1)} 강한 상대. 이기면 큰 점수, 져도 감점이 작습니다.` : `우리보다 약한 상대. 이겨도 점수가 작고, 지면 크게 깎입니다.`} 풀세트 접전은 이기든 지든 시청률이 크게 오르고, 0:3 완패는 시청률이 떨어집니다.</p>
+            <p className="small" style={{ margin: 0 }}>작전 상성 ×1.4 (신인감독모드) · {oo > our ? `우리보다 ${(oo - our).toFixed(1)} 강한 상대. 이기면 큰 점수, 져도 감점이 작습니다.` : `우리보다 약한 상대. 이겨도 점수가 작고, 지면 크게 깎입니다.`} 풀세트 접전은 이기든 지든 시청률이 크게 오르고, 0:3 완패는 시청률이 떨어집니다.</p>
           </section>
           <section className="card">
             <b className="small">상대 작전 · 전력분석관 {userClub(c).facilities.analysis}/5</b>
             <div className="row wrap" style={{ gap: 6 }}>{scout.map((v, i) => <span key={i} className={`tag ${v ? 'blue' : ''}`}>{AXES[i]}: {v ?? '?'}</span>)}</div>
             <div className="row between small"><span>우리 작전{c.autoCoach ? ' · 자동 대응' : ''}</span><button className="btn xs" onClick={() => { setPre(false); g.setTab('tactics'); }}>바꾸기</button></div>
           </section>
+          <RecommendPanel me={userTeam(c).starters} them={opp} known={known} ourOvr={our} oppOvr={oo} onEdit={() => { setPre(false); g.setTab('tactics'); }} />
           <section className="card">
             <div className="row" style={{ gap: 6 }}><Crest id={f.opp} size={18} /><b className="small">{clubShort(f.opp)} 예상 선발{f.squad ? ` (${f.squad})` : ''}</b></div>
             {opp.map(p => <div key={p.id} className="lu"><Pos p={p.position} /><b>{p.name}</b><Ovr v={ovr(p)} /></div>)}
@@ -435,6 +534,7 @@ function Leagues() {
 
 function RookieClub() {
   const { c, quit, openMarket } = useGame();
+  const [review, setReview] = useState(false);
   const s = rk(c);
   const club = userClub(c);
   const total = scoreTotal(c);
@@ -449,6 +549,13 @@ function RookieClub() {
         <span className="grow"><b>선수 영입</b> {s.revealed && <span className="tag good">영입 가능</span>}<div className="tiny muted">고교-대학리그 선수 · 무소속 선수 (최대 {MAX_SQUAD}명)</div></span>
         <span className="chev"><Icon name="chev" /></span>
       </button>
+      {s.tryout?.review && (
+        <button className="menu-row" onClick={() => setReview(true)}>
+          <span className="ico">📝</span>
+          <span className="grow"><b>트라이아웃 복기</b><div className="tiny muted">트라이아웃 기록 옆 실제 OVR · 안목 {s.tryout.review.hits}/{s.tryout.review.n}</div></span>
+          <span className="chev"><Icon name="chev" /></span>
+        </button>
+      )}
       <section className="card">
         <h2>재정 (주간)</h2>
         <div className="list small">
@@ -480,7 +587,9 @@ function RookieClub() {
         </div>
         <p className="tiny muted" style={{ margin: 0 }}>신인감독모드에서는 건물을 지을 수 없습니다. 자금은 선수 영입과 구단 운영에 씁니다.</p>
       </section>
+      <OptionsCard />
       <button className="btn block" onClick={quit}>저장하고 타이틀로</button>
+      {review && <Overlay title="트라이아웃 복기" onClose={() => setReview(false)}><TryoutReview /></Overlay>}
     </>
   );
 }

@@ -2,7 +2,7 @@
 import { ovr } from '../src/engine/player.ts';
 import { starterAvg } from '../src/game/career.ts';
 import {
-  autoToMatch, dayKind, newRookie, rk, rookieAdvance, staffPool, tryoutPlayers, USER, prospects, recruit, estimate, type League,
+  autoToMatch, dayKind, newRookie, playTryout, rk, rookieAdvance, staffPool, tryoutPlayers, USER, prospects, recruit, estimate, type League,
 } from '../src/game/rookie.ts';
 
 const PLANS: Record<string, number[]> = {
@@ -21,6 +21,7 @@ function run(seed: number, plan: string, days: string, staffIdx: string[]) {
   const staff = staffIdx.map(id => pool.find(s => s.id === id)!);
   const c = newRookie({ slot: 0, name: '테스트', short: '테스트', color: '#f60', staff, seed });
   const s = rk(c);
+  playTryout(c);
   // tryout: coach picks + best tryout scorers per position to fill out 14
   const t = s.tryout!;
   const ps = tryoutPlayers(c).sort((a, b) => t.stats[b.id].pts / Math.max(1, t.stats[b.id].g) - t.stats[a.id].pts / Math.max(1, t.stats[a.id].g));

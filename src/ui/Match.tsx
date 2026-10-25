@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LiveMatch, MatchReport } from '../game/career.ts';
 import { clubShort } from '../game/career.ts';
 import type { BreakEvent, StepInput } from '../engine/match.ts';
-import type { Player, Tactic } from '../engine/types.ts';
+import type { Player, PlayerLine, Tactic } from '../engine/types.ts';
 import { advise, assistantCoach } from '../engine/coach.ts';
 import { ovr } from '../engine/player.ts';
 import { TACTIC_INFO, optName } from '../game/tactics.ts';
-import { Crest, Icon, Overlay, Pos, POS_KO, Sheet, useGame } from './common.tsx';
+import { Crest, Fold, Icon, Overlay, Pos, POS_KO, Sheet, useGame } from './common.tsx';
+import { BoxTable, ForecastBox, rowsFromLines, type BoxRow } from './Assist.tsx';
+import { forecastLive } from '../game/advice.ts';
 
 interface Point { lines: string[]; score: [number, number]; winner: 0 | 1; set: number }
 type Feed = { kind: 'set'; text: string } | { kind: 'note'; text: string } | { kind: 'pt'; p: Point };
@@ -89,6 +91,9 @@ export function MatchView({ report: r, speed: speed0 = 0, atEnd, onClose }: { re
     </section>
   );
 
+  const [tab, setTab] = useState<'feed' | 'players'>('feed');
+  const partialBox = useMemo(() => (tab === 'players' && !done ? boxFromLog(shown, r) : []), [tab, i, done, r]);
+
   if (done) return (
     <Overlay title={`${r.title} 결과`} onClose={onClose} footer={<button className="btn orange" onClick={onClose}>확인</button>}>
       <div className={`banner ${won ? '' : 'lose'}`}>
@@ -127,9 +132,10 @@ export function MatchView({ report: r, speed: speed0 = 0, atEnd, onClose }: { re
         <span className="ball" style={{ left: `${ball[0]}%`, top: `${ball[1]}%` }} />
       </div>
       <div className="setline row wrap" style={{ gap: 6 }}>{setsDone.map((s, k) => <span key={k} className="tag">{k + 1}세트 {s[0]}:{s[1]}</span>)}</div>
+      <FeedTabs tab={tab} setTab={setTab} />
       <section className="card">
-        <h2>문자 중계</h2>
-        <FeedList feed={shown} us={us} />
+        {tab === 'feed' ? <><h2>문자 중계</h2><FeedList feed={shown} us={us} /></>
+          : <><h2>선수 기록 <span className="tiny muted">지금까지</span></h2><BoxTable rows={partialBox} names={[clubShort(r.home), clubShort(r.away)]} us={us} partial /></>}
       </section>
     </Overlay>
   );
@@ -222,6 +228,8 @@ export function LiveMatchView({ live, speed: speed0 = 0, mode = 'full', onDone }
   const [signal, setSignal] = useState<Partial<Tactic> | null>(null);
   const [signalOpen, setSignalOpen] = useState(false);
   const quick = useRef(false);
+  const [tab, setTab] = useState<'feed' | 'players'>('feed');
+  const box = useRef<Map<string, PlayerLine> | null>(null);
   const prevTactics = useRef<[Tactic, Tactic] | null>(null);
   const parsed = useMemo(() => parse(log), [log]);
   const feed = useMemo(() => (mode === 'highlight' ? highlightFeed(parsed) : parsed), [parsed, mode]);
@@ -236,12 +244,14 @@ export function LiveMatchView({ live, speed: speed0 = 0, mode = 'full', onDone }
     const r = live.steps.next(sent);
     if (r.done) {
       live.result = r.value;
+      box.current = r.value.lines;
       setLog(r.value.log.slice());
       setFinished(true);
       return;
     }
     const e = r.value;
     last.current = e.type;
+    box.current = e.box;
     setLog(l => [...l, ...e.lines]);
     setScore(e.score);
     if (e.setNo !== setNo) { setSetNo(e.setNo); setToLeft(2); }
@@ -276,6 +286,7 @@ export function LiveMatchView({ live, speed: speed0 = 0, mode = 'full', onDone }
     let r = live.steps.next(auto);
     while (!r.done) r = live.steps.next(auto);
     live.result = r.value;
+    box.current = r.value.lines;
     setBrk(null);
     setLog(r.value.log.slice());
     setSets(r.value.sets.map(x => x.score));
@@ -284,6 +295,11 @@ export function LiveMatchView({ live, speed: speed0 = 0, mode = 'full', onDone }
 
   const lastPt = [...feed].reverse().find(f => f.kind === 'pt') as { p: Point } | undefined;
   const ball = lastPt ? (lastPt.p.winner === 0 ? [62 + (log.length * 13) % 30, 18 + (log.length * 29) % 64] : [8 + (log.length * 17) % 30, 18 + (log.length * 23) % 64]) : [50, 50];
+  const sides: [Player, 0 | 1][] = [live.th.team, live.ta.team].flatMap((t, s) => [...t.lineup, t.libero, ...(t.bench ?? [])].map(p => [p, s as 0 | 1] as [Player, 0 | 1]));
+  const rows = tab === 'players' && box.current ? rowsFromLines(sides, box.current) : [];
+  const ours: [number, number] = us === 0 ? score : [score[1], score[0]];
+  const oursSets: [number, number] = us === 0 ? setsWon : [setsWon[1], setsWon[0]];
+  const fc = tactics && !finished ? forecastLive(ours, oursSets, tactics[us]) : null;
 
   return (
     <Overlay title={live.label} onClose={skip} footer={finished ? <button className="btn orange" onClick={done}>결과 보기</button> : <div className="speedbar">
@@ -318,16 +334,63 @@ export function LiveMatchView({ live, speed: speed0 = 0, mode = 'full', onDone }
             {TACTIC_INFO.filter(a => !a.when || a.when(tactics[1 - us])).map(a => <span key={a.key} className={`tag ${oppChanged.includes(a.key) ? 'orange' : 'blue'}`}>{a.name}: {optName(a.key, tactics[1 - us][a.key] ?? (a.key === 'aim' ? 'weak' : a.key === 'trick' ? 'none' : ''))}</span>)}
           </div>
           {signal && <span className="tiny c-orange">다음 랠리부터 적용: {(Object.keys(signal) as (keyof Tactic)[]).map(k => optName(k, signal[k])).join(', ')}</span>}
+          {fc && <ForecastBox f={fc} />}
         </section>
       )}
+      {mode === 'highlight' && fc && <ForecastBox f={fc} />}
       <p className="tiny muted" style={{ margin: 0 }}>{mode === 'full'
         ? '풀 중계: 상대 작전이 바뀌는 걸 보면서 "작전 지시"로 언제든 작전을 바꿀 수 있어요 (다음 랠리부터). 교체는 작전 타임·테크니컬 타임아웃·세트 사이에.'
         : '하이라이트: 연속 득점·접전·세트 포인트만 보여줍니다. 작전 타임(세트당 2번), 테크니컬 타임아웃, 세트 사이에 멈춰서 작전과 선수를 바꿀 수 있어요.'}</p>
-      <section className="card"><h2>문자 중계</h2><FeedList feed={feed} us={us} /></section>
+      <FeedTabs tab={tab} setTab={setTab} />
+      <section className="card">
+        {tab === 'feed' ? <><h2>문자 중계</h2><FeedList feed={feed} us={us} /></>
+          : <><h2>선수 기록 <span className="tiny muted">{finished ? '최종' : '실시간'}</span></h2><BoxTable rows={rows} names={[clubShort(live.home), clubShort(live.away)]} us={us} /></>}
+      </section>
       {brk && <BreakPanel e={brk} us={us} onResume={plan => { setBrk(null); step(plan); }} onAuto={skip} />}
       {signalOpen && tactics && <SignalSheet cur={tactics[us]} onClose={() => { setSignalOpen(false); setPaused(false); }} onSend={t => { setSignal(t); setSignalOpen(false); setPaused(false); }} />}
     </Overlay>
   );
+}
+
+function FeedTabs({ tab, setTab }: { tab: 'feed' | 'players'; setTab(t: 'feed' | 'players'): void }) {
+  return <div className="bigtabs" style={{ ['--n' as string]: 2 }}>{([['feed', '경기 기록'], ['players', '선수 기록']] as const).map(([k, n]) => <button key={k} aria-pressed={tab === k} onClick={() => setTab(k)}>{n}</button>)}</div>;
+}
+
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * A replay only has the play-by-play, so count the shown rallies' lines per player
+ * (kills, blocks, aces, digs, errors, attempts). Names come from the final box.
+ */
+function boxFromLog(feed: Feed[], r: MatchReport): BoxRow[] {
+  const rows = new Map<string, BoxRow>();
+  for (const b of r.box) if (!rows.has(b.name)) rows.set(b.name, { id: b.id, name: b.name, pos: b.pos, side: b.side, kills: 0, attacks: 0, blocks: 0, aces: 0, digs: 0, errors: 0, recv: 0, recvA: 0 });
+  if (!rows.size) return [];
+  const N = `(${[...rows.keys()].sort((a, b) => b.length - a.length).map(esc).join('|')})`;
+  const KIND = '(?:속공|백어택|오픈 공격)';
+  const res = {
+    ace: new RegExp(`^${N} .*서브 에이스`), serr: new RegExp(`^${N} 서브 범실`),
+    kill: new RegExp(`${N} ${KIND} 득점`), dump: new RegExp(`^${N} (?:세터 )?투 어택`), dumpKill: new RegExp(`^${N} 세터 투 어택\\(패스 페인트\\) 득점`),
+    aerr: new RegExp(`${N} ${KIND} 범실`), block: new RegExp(`, ${N} 블로킹 득점`), dig: new RegExp(`→ ${N} 디그`),
+    att: new RegExp(`${N} ${KIND}`, 'g'), cover: new RegExp(`^${N} 공격이 블로킹`),
+  };
+  const get = (m: RegExpMatchArray | null) => (m ? rows.get(m[1]) : undefined);
+  for (const f of feed) {
+    if (f.kind !== 'pt') continue;
+    for (const l of f.p.lines) {
+      let x: BoxRow | undefined;
+      if ((x = get(l.match(res.ace)))) x.aces++;
+      if ((x = get(l.match(res.serr)))) x.errors++;
+      if ((x = get(l.match(res.kill)))) x.kills++;
+      if ((x = get(l.match(res.dumpKill)))) x.kills++;
+      if ((x = get(l.match(res.dump)))) x.attacks++;
+      if ((x = get(l.match(res.aerr)))) x.errors++;
+      if ((x = get(l.match(res.block)))) x.blocks++;
+      if ((x = get(l.match(res.dig)))) x.digs++;
+      if ((x = get(l.match(res.cover)))) x.attacks++;
+      for (const m of l.matchAll(res.att)) { const y = rows.get(m[1]); if (y) y.attacks++; }
+    }
+  }
+  return [...rows.values()].filter(b => b.kills + b.attacks + b.blocks + b.aces + b.digs + b.errors > 0);
 }
 
 /** in highlight mode: set markers, coaching notes and the rallies worth seeing */
@@ -375,6 +438,7 @@ function BreakPanel({ e, us, onResume, onAuto }: { e: BreakEvent; us: 0 | 1; onR
   const [pick, setPick] = useState<number | 'L' | null>(null);
   const [open, setOpen] = useState<keyof Tactic | null>(null);
   const advice = useMemo(() => advise(v, e.oppTactic), [e]);
+  const fc = forecastLive(v.score, v.setsWon, cur);
   const free = e.kind === 'set';
   const subsLeft = free ? 99 : v.subsLeft - subs.filter(s => s[0] !== 'L').length;
   const changed = (Object.keys(draft) as (keyof Tactic)[]).filter(k => draft[k] !== (cur[k] ?? (k === 'aim' ? 'weak' : k === 'trick' ? 'none' : undefined)));
@@ -412,17 +476,19 @@ function BreakPanel({ e, us, onResume, onAuto }: { e: BreakEvent; us: 0 | 1; onR
         </div>
         <div className="tiny muted">상대 공격 비율 · 레프트 {share(oa.OH)} · 라이트 {share(oa.OP)} · 센터 {share(oa.MB)} (백어택 {share(oa.back)})</div>
         <div className="tiny muted">우리 리시브 · 정확 {rN ? Math.round(100 * rv.A / rN) : 0}% · 흔들림 {rN ? Math.round(100 * (rv.C + rv.aced) / rN) : 0}%</div>
+        <ForecastBox f={fc} title="이번 휴식에 상대가" />
       </section>
 
       <section className="card">
         <div className="row between"><h2>수석 코치 조언</h2>{adviceDiff.length > 0 && <button className="btn xs blue3d" onClick={() => setDraft(d => ({ ...d, ...advice.tactic }))}>조언대로 바꾸기</button>}</div>
-        <div className="stack" style={{ gap: 8 }}>
-          {advice.notes.map((n, k) => (
-            <div key={k} className="coach-note" data-warn={n.warn ? '' : undefined}><b>{n.title}</b><span>{n.text}</span></div>
-          ))}
-          {!advice.notes.length && <span className="small muted">지금 작전이 좋아 보입니다. 그대로 가도 돼요.</span>}
-        </div>
-        <p className="tiny muted" style={{ margin: 0 }}>상성을 맞추면 OVR 3~4점만큼 이득이지만, 선수 능력 차이가 크면 작전으로도 못 이길 수 있어요.</p>
+        {advice.notes.length ? (
+          <Fold title={`조언 ${advice.notes.length}개 보기`} hint={adviceDiff.length ? `${adviceDiff.length}개 변경 제안` : '지금 작전과 같음'}>
+            {advice.notes.map((n, k) => (
+              <div key={k} className="coach-note" data-warn={n.warn ? '' : undefined}><b>{n.title}</b><span>{n.text}</span></div>
+            ))}
+            <p className="tiny muted" style={{ margin: 0 }}>상성을 맞추면 OVR 3~4점만큼 이득이지만, 선수 능력 차이가 크면 작전으로도 못 이길 수 있어요.</p>
+          </Fold>
+        ) : <span className="small muted">지금 작전이 좋아 보입니다. 그대로 가도 돼요.</span>}
       </section>
 
       <section className="card">
@@ -438,7 +504,7 @@ function BreakPanel({ e, us, onResume, onAuto }: { e: BreakEvent; us: 0 | 1; onR
               <div className="seg">
                 {Object.entries(a.opts).map(([val, o]) => <button key={val} aria-pressed={String(draft[a.key]) === val} onClick={() => setDraft(d => ({ ...d, [a.key]: a.key === 'reception' ? Number(val) : val }))}>{o.name}</button>)}
               </div>
-              {sel && <span className="tiny muted">{sel.what}{open === a.key && <><br /><b>잘 통함</b> {sel.good}<br /><b>약점</b> {sel.weak}</>}</span>}
+              {sel && open === a.key && <span className="tiny muted">{sel.what}<br /><b>잘 통함</b> {sel.good}<br /><b>약점</b> {sel.weak}</span>}
             </div>
           );
         })}

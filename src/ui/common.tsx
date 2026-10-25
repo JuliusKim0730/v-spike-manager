@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useState } from 'react';
 import type { Career } from '../game/career.ts';
 import { clubColor, clubShort } from '../game/career.ts';
 import type { Pro } from '../engine/league/types.ts';
@@ -75,6 +75,19 @@ export function Gauges({ p }: { p: Pro }) {
     <span className="row" style={{ gap: 6 }}>
       {g.map(([k, l]) => <span key={k} className={`gauge ${l}`} title={`${k} ${l === 'up' ? '상승' : l === 'down' ? '하락' : '평균'}`}>{k[0]}{ARROW[l]}</span>)}
     </span>
+  );
+}
+
+/** 접기 (Julius 2026-10-25: 조언·작전 설명은 접어두고 누르면 펼치기) */
+export function Fold({ title, hint, open: open0 = false, children }: { title: React.ReactNode; hint?: React.ReactNode; open?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(open0);
+  return (
+    <div className={`fold${open ? ' open' : ''}`}>
+      <button className="fold-head" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <span className="grow">{title}</span>{hint && <span className="tiny muted">{hint}</span>}<span className="fold-chev" aria-hidden="true">▾</span>
+      </button>
+      {open && <div className="fold-body">{children}</div>}
+    </div>
   );
 }
 

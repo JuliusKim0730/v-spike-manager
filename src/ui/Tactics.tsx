@@ -4,7 +4,7 @@ import type { Pro } from '../engine/league/types.ts';
 import { clubColor, isFirstTeam, ovr, PRESETS, SLOT_LABEL, SLOT_POS, userClub, userTeam, type Preset } from '../game/career.ts';
 import { MATCHUPS, TACTIC_INFO } from '../game/tactics.ts';
 import { Avatar } from './art.tsx';
-import { Ovr, Pos, POS_KO, Sheet, useGame } from './common.tsx';
+import { Fold, Ovr, Pos, POS_KO, Sheet, useGame } from './common.tsx';
 
 export function Tactics() {
   const [view, setView] = useState<'lineup' | 'tactic' | 'chart'>('lineup');
@@ -131,16 +131,18 @@ function TacticPanel() {
           return (
             <div key={a.key} className="stack" style={{ gap: 4 }}>
               <b className="small">{a.name}</b>
-              <span className="tiny muted">{a.intro}</span>
               <div className="seg">
                 {Object.entries(a.opts).map(([v, o]) => <button key={v} aria-pressed={cur === v} onClick={() => change(a.key, v)}>{o.name}</button>)}
               </div>
               {sel && (
-                <div className="opt-help">
-                  <div>{sel.what}</div>
-                  <div><b className="good">잘 통함</b> {sel.good}</div>
-                  <div><b className="weak">약점</b> {sel.weak}</div>
-                </div>
+                <Fold title={<span className="tiny">{sel.name} 설명</span>}>
+                  <span className="tiny muted">{a.intro}</span>
+                  <div className="opt-help">
+                    <div>{sel.what}</div>
+                    <div><b className="good">잘 통함</b> {sel.good}</div>
+                    <div><b className="weak">약점</b> {sel.weak}</div>
+                  </div>
+                </Fold>
               )}
             </div>
           );

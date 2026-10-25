@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { FreeChoice, Career } from '../game/career.ts';
 import {
   advance, AXES, canTrade, clubColor, clubShort, clubStarters, DIV_NAME, finance, nextFixture, ovr, phaseLabel, PRESETS, scoutTactic,
-  seasonProgress, standings, starterAvg, userClub, userDraftPick, userInPlayoffs, userOnTheClock, clubName,
+  seasonProgress, standings, starterAvg, userClub, userDraftPick, userInPlayoffs, userOnTheClock, clubName, recommendOn, scoutKnown, userTeam,
 } from '../game/career.ts';
+import { RecommendPanel, ReportCard } from './Assist.tsx';
 import { Avatar } from './art.tsx';
-import { Crest, Grade, Icon, Overlay, Ovr, Pos, POS_KO, money, useGame } from './common.tsx';
+import { Crest, Fold, Grade, Icon, Overlay, Ovr, Pos, POS_KO, money, useGame } from './common.tsx';
 import type { LiveMode } from './Match.tsx';
 
 export function Home() {
@@ -24,6 +25,7 @@ export function Home() {
       </div>
       <div className="progress"><div className="track"><i style={{ width: `${pct}%` }} /></div><span>{pct}% ({done}/{total})</span></div>
       <TurnCard />
+      <ReportCard />
       <Timeline />
       {canTrade(c) && <TradeHint />}
       <Best />
@@ -362,12 +364,13 @@ function PreMatch({ onClose }: { onClose(): void }) {
           <span className="row" style={{ gap: 4 }}>{c.results.slice(-5).map((r, i) => <span key={i} className={`wl ${r.win ? 'w' : 'l'}`}>{r.win ? 'W' : 'L'}</span>)}{!c.results.length && <span className="tiny muted">기록 없음</span>}</span>
         </div>
       </section>
-      <div className="coach-tip"><b>수석코치:</b><span>{coachTip(c, scout)}</span></div>
       <section className="card">
         <div className="row between"><b className="small">상대 작전 · 전력분석실 {club.facilities.analysis}단계</b></div>
         <div className="row wrap" style={{ gap: 6 }}>{scout.map((v, i) => <span key={i} className={`tag ${v ? 'blue' : ''}`}>{AXES[i]}: {v ?? '?'}</span>)}</div>
         <div className="row between small"><span>우리 작전 <b>{preset}</b>{c.autoCoach ? ' · 자동 대응' : ''}</span><button className="btn xs" onClick={() => { onClose(); g.setTab('tactics'); }}>바꾸기</button></div>
+        {recommendOn(c) && <Fold title="수석코치 한마디"><span className="small">{coachTip(c, scout)}</span></Fold>}
       </section>
+      <RecommendPanel me={userTeam(c).starters} them={clubStarters(c, f.opp)} known={scoutKnown(c, f.opp)} ourOvr={starterAvg(club)} oppOvr={starterAvg(opp)} onEdit={() => { onClose(); g.setTab('tactics'); }} />
       <div className="lineups">
         {[away, home].map(id => (
           <section key={id} className="card">
