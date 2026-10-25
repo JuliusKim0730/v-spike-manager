@@ -5,7 +5,7 @@ import { DEFAULT_TACTIC, ID_SEQ } from '../engine/player.ts';
 const KEY = (slot: number) => `vbm.save.${slot}`;
 export const SLOTS = [0, 1, 2];
 
-export interface SlotInfo { slot: number; team: string; year: number; phase: string; savedAt: number }
+export interface SlotInfo { slot: number; team: string; year: number; phase: string; savedAt: number; mode?: 'rookie' }
 
 function store(): Storage | null {
   try { return window.localStorage; } catch { return null; }
@@ -15,7 +15,7 @@ export function saveCareer(c: Career, meta: { team: string; phase: string }) {
   c.savedAt = Date.now();
   try {
     store()?.setItem(KEY(c.slot), JSON.stringify(c));
-    store()?.setItem(KEY(c.slot) + '.meta', JSON.stringify({ slot: c.slot, team: meta.team, year: c.world.year, phase: meta.phase, savedAt: c.savedAt }));
+    store()?.setItem(KEY(c.slot) + '.meta', JSON.stringify({ slot: c.slot, team: meta.team, year: c.world.year, phase: meta.phase, savedAt: c.savedAt, mode: c.mode }));
     return true;
   } catch { return false; }
 }

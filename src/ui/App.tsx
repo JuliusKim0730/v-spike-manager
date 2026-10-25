@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Career, LiveMatch } from '../game/career.ts';
 import { advance, clubName, DIV_NAME, makeWorld, newCareer, phaseLabel, startLive, starterAvg, userClub, budgetOf } from '../game/career.ts';
-import { CLUBS } from '../game/names.ts';
+import { CLUBS, setClubTable } from '../game/names.ts';
 import { deleteSlot, lastSlot, loadCareer, saveCareer, slotInfo, SLOTS } from '../game/storage.ts';
 import type { Pro } from '../engine/league/types.ts';
 import { Crest, Game, Icon, money, Ovr, Sheet, useGame, type GameApi, type Tab } from './common.tsx';
@@ -11,21 +11,26 @@ import { Roster, PlayerSheet } from './Roster.tsx';
 import { Tactics } from './Tactics.tsx';
 import { Standings } from './Standings.tsx';
 import { Club, Market } from './Club.tsx';
-import { LiveMatchView, MatchView } from './Match.tsx';
+import { LiveMatchView, MatchView, type LiveMode } from './Match.tsx';
 import { Credits } from './Credits.tsx';
+import { RookieShell } from './Rookie.tsx';
+import { RookieSetup } from './RookieSetup.tsx';
 
 export function App() {
   const [career, setCareer] = useState<Career | null>(null);
-  const [screen, setScreen] = useState<'title' | 'new' | 'credits'>('title');
-  if (career) return <GameShell career={career} onQuit={() => { setCareer(null); setScreen('title'); }} />;
-  if (screen === 'new') return <NewGame onBack={() => setScreen('title')} onStart={c => setCareer(c)} />;
+  const [screen, setScreen] = useState<'title' | 'new' | 'rookie' | 'credits'>('title');
+  const start = (c: Career) => { setClubTable(c.names); setCareer(c); };
+  const quit = () => { setCareer(null); setScreen('title'); };
+  if (career) return career.mode === 'rookie' ? <RookieShell career={career} onQuit={quit} /> : <GameShell career={career} onQuit={quit} />;
+  if (screen === 'new') return <NewGame onBack={() => setScreen('title')} onStart={start} />;
+  if (screen === 'rookie') return <RookieSetup onBack={() => setScreen('title')} onStart={start} />;
   if (screen === 'credits') return <Credits onBack={() => setScreen('title')} />;
-  return <Title onNew={() => setScreen('new')} onLoad={c => setCareer(c)} onCredits={() => setScreen('credits')} />;
+  return <Title onNew={() => setScreen('new')} onRookie={() => setScreen('rookie')} onLoad={start} onCredits={() => setScreen('credits')} />;
 }
 
 // ───────────────────────── title ─────────────────────────
 
-function Title({ onNew, onLoad, onCredits }: { onNew(): void; onLoad(c: Career): void; onCredits(): void }) {
+function Title({ onNew, onRookie, onLoad, onCredits }: { onNew(): void; onRookie(): void; onLoad(c: Career): void; onCredits(): void }) {
   const [, force] = useState(0);
   const [slots, setSlots] = useState(false);
   const [confirmDel, setConfirmDel] = useState<number | null>(null);
@@ -41,6 +46,7 @@ function Title({ onNew, onLoad, onCredits }: { onNew(): void; onLoad(c: Career):
         <div className="title-btns">
           <button className="tbtn cont" disabled={last === null} onClick={() => setSlots(true)}>이어하기</button>
           <button className="tbtn new" onClick={onNew}>새 게임 시작</button>
+          <button className="tbtn rookie" onClick={onRookie}>신인감독모드<span>63일 안에 8구단 창단하기</span></button>
           <span className="tiny" style={{ textAlign: 'center', opacity: .85 }}>게스트 모드 · 기록은 이 브라우저에만 저장됩니다</span>
           <button className="credit-link" onClick={onCredits}>만든이 · Contact</button>
         </div>
@@ -52,7 +58,7 @@ function Title({ onNew, onLoad, onCredits }: { onNew(): void; onLoad(c: Career):
               <div className={`slotcard ${s ? '' : 'empty'}`}>
                 <div className="grow">
                   <div className="tiny muted" style={{ fontWeight: 700 }}>슬롯 {i + 1}{i === last ? ' · 최근' : ''}</div>
-                  {s ? <><b>{s.team}</b><div className="tiny muted">{s.year}시즌 · {s.phase}</div></> : <span className="small">저장된 게임 없음</span>}
+                  {s ? <><b>{s.team}</b><div className="tiny muted">{s.mode === 'rookie' ? s.phase : `${s.year}시즌 · ${s.phase}`}</div></> : <span className="small">저장된 게임 없음</span>}
                 </div>
                 {s && <button className="btn xs ghost" onClick={() => setConfirmDel(i)}>삭제</button>}
                 {s && <button className="btn sm primary" onClick={() => load(i)}>이어하기</button>}
@@ -137,7 +143,7 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
   const [tab, setTab] = useState<Tab>('home');
   const [toastMsg, setToast] = useState<string | null>(null);
   const [match, setMatch] = useState<number | 'end' | false>(false);
-  const [live, setLive] = useState<{ m: LiveMatch; speed: number } | null>(null);
+  const [live, setLive] = useState<{ m: LiveMatch; speed: number; mode: LiveMode } | null>(null);
   const [player, setPlayer] = useState<Pro | null>(null);
   const [market, setMarket] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -159,7 +165,7 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
   const api: GameApi = {
     c, refresh, toast, busy, setTab, quit: onQuit,
     openMatch: (speed?: number) => setMatch(speed ?? 0),
-    openLive: (speed: number) => { const m = startLive(c); if (m) setLive({ m, speed }); },
+    openLive: (speed: number, mode: LiveMode = 'full') => { const m = startLive(c); if (m) setLive({ m, speed, mode }); },
     openPlayer: p => setPlayer(p),
     openMarket: () => setMarket(true),
     run: fn => { setBusy(true); window.setTimeout(() => { try { fn(); } finally { setBusy(false); refresh(); } }, 30); },
@@ -184,7 +190,7 @@ function GameShell({ career, onQuit }: { career: Career; onQuit(): void }) {
         </nav>
       </div>
       {match !== false && c.lastMatch && <MatchView report={c.lastMatch} speed={match === 'end' ? 0 : match} atEnd={match === 'end'} onClose={() => setMatch(false)} />}
-      {live && <LiveMatchView live={live.m} speed={live.speed} onDone={() => {
+      {live && <LiveMatchView live={live.m} speed={live.speed} mode={live.mode} onDone={() => {
         const m = advance(c, { live: live.m });
         setLive(null);
         refresh();

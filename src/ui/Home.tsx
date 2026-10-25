@@ -6,6 +6,7 @@ import {
 } from '../game/career.ts';
 import { Avatar } from './art.tsx';
 import { Crest, Grade, Icon, Overlay, Ovr, Pos, POS_KO, money, useGame } from './common.tsx';
+import type { LiveMode } from './Match.tsx';
 
 export function Home() {
   const { c } = useGame();
@@ -337,13 +338,13 @@ function PreMatch({ onClose }: { onClose(): void }) {
     onClose();
     if (m) toast(m);
   });
-  const direct = (speed: number) => { onClose(); g.openLive(speed); };
+  const direct = (speed: number, mode: LiveMode = 'full') => { onClose(); g.openLive(speed, mode); };
   const [home, away] = f.home ? [c.userId, f.opp] : [f.opp, c.userId];
   return (
     <Overlay title={`${f.label} · 경기 정보`} onClose={onClose} footer={<>
-      <button className="btn blue3d" disabled={busy} onClick={() => direct(0)}><Icon name="play" />직접 지휘</button>
-      <button className="btn orange" disabled={busy} onClick={() => direct(2)}><Icon name="bolt" />빠른 지휘</button>
-      <button className="btn red" disabled={busy} onClick={() => play()}>{busy ? <span className="spinner" /> : '결과만'}</button>
+      <button className="btn blue3d" disabled={busy} onClick={() => direct(0)}><Icon name="play" />풀 중계</button>
+      <button className="btn orange" disabled={busy} onClick={() => direct(0, 'highlight')}><Icon name="bolt" />하이라이트</button>
+      <button className="btn red" disabled={busy} onClick={() => play()}>{busy ? <span className="spinner" /> : '자동 진행'}</button>
     </>}>
       <section className="card">
         <div className="vs-card">
@@ -375,7 +376,7 @@ function PreMatch({ onClose }: { onClose(): void }) {
           </section>
         ))}
       </div>
-      <p className="tiny muted" style={{ margin: 0 }}>직접 지휘 = 1배속 중계, 빠른 지휘 = 10배속. 둘 다 작전 타임·테크니컬 타임아웃·세트 사이에 멈춰서 작전과 선수를 바꿀 수 있어요. 결과만 = 수석 코치에게 맡기고 결과만 봅니다. 상대 라인업은 예상 선발입니다.</p>
+      <p className="tiny muted" style={{ margin: 0 }}>풀 중계 = 모든 랠리를 보며 상대 작전 변화를 확인하고 언제든 작전 지시. 하이라이트 = 주요 장면만 보고 작전 타임·테크니컬 타임아웃·세트 사이에만 작전 변경. 자동 진행 = 수석 코치에게 맡기고 결과만 봅니다. 상대 라인업은 예상 선발입니다.</p>
     </Overlay>
   );
 }

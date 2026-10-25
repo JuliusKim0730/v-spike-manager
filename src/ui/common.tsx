@@ -5,6 +5,7 @@ import type { Pro } from '../engine/league/types.ts';
 import { gradeOf } from '../engine/league/rules.ts';
 import { CFG } from '../engine/config.ts';
 import { CrestArt } from './art.tsx';
+import type { LiveMode } from './Match.tsx';
 
 export interface GameApi {
   c: Career;
@@ -12,8 +13,8 @@ export interface GameApi {
   toast(msg: string): void;
   /** speed index into the match viewer's speeds (0 = 1×); omitted = show the finished match */
   openMatch(speed?: number): void;
-  /** play the user's next match live (작전 타임·교체); speed index as above */
-  openLive(speed: number): void;
+  /** play the user's next match live (작전 타임·교체); speed index as above; mode: full broadcast or highlights */
+  openLive(speed: number, mode?: LiveMode): void;
   openPlayer(p: Pro): void;
   openMarket(): void;
   setTab(t: Tab): void;

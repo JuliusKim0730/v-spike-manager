@@ -6,7 +6,7 @@ import type { Player, Tactic } from '../engine/types.ts';
 import { advise, assistantCoach } from '../engine/coach.ts';
 import { ovr } from '../engine/player.ts';
 import { TACTIC_INFO, optName } from '../game/tactics.ts';
-import { Crest, Icon, Overlay, Pos, POS_KO, useGame } from './common.tsx';
+import { Crest, Icon, Overlay, Pos, POS_KO, Sheet, useGame } from './common.tsx';
 
 interface Point { lines: string[]; score: [number, number]; winner: 0 | 1; set: number }
 type Feed = { kind: 'set'; text: string } | { kind: 'note'; text: string } | { kind: 'pt'; p: Point };
@@ -193,7 +193,17 @@ function Box({ r }: { r: MatchReport }) {
 const BREAK_TITLE = { timeout: '작전 타임', technical: '테크니컬 타임아웃', set: '세트 사이 휴식' };
 
 /** The user's match played point by point; play stops at every timeout and between sets so the user can change the plan */
-export function LiveMatchView({ live, speed: speed0 = 0, onDone }: { live: LiveMatch; speed?: number; onDone(): void }) {
+/** full = every rally, bench signals any time · highlight = only the key rallies, decisions at breaks */
+export type LiveMode = 'full' | 'highlight';
+
+/** a rally worth showing in highlight mode: a run of 3+, a close finish, or the set's last point */
+function isHighlight(e: { setNo: number; score: [number, number]; run: number }) {
+  const target = e.setNo === 5 ? 15 : 25;
+  const hi = Math.max(...e.score), diff = Math.abs(e.score[0] - e.score[1]);
+  return e.run >= 3 || (hi >= target - 3 && diff <= 2) || (hi >= target && diff >= 2);
+}
+
+export function LiveMatchView({ live, speed: speed0 = 0, mode = 'full', onDone }: { live: LiveMatch; speed?: number; mode?: LiveMode; onDone(): void }) {
   const us = live.userSide;
   const [log, setLog] = useState<string[]>([]);
   const [score, setScore] = useState<[number, number]>([0, 0]);
@@ -207,7 +217,14 @@ export function LiveMatchView({ live, speed: speed0 = 0, onDone }: { live: LiveM
   const [toLeft, setToLeft] = useState(2);
   const last = useRef<'none' | 'point' | 'break'>('none');
   const input = useRef<StepInput | undefined>(undefined);
-  const feed = useMemo(() => parse(log), [log]);
+  const [tactics, setTactics] = useState<[Tactic, Tactic] | null>([{ ...live.th.team.tactic }, { ...live.ta.team.tactic }]);
+  const [oppChanged, setOppChanged] = useState<(keyof Tactic)[]>([]);
+  const [signal, setSignal] = useState<Partial<Tactic> | null>(null);
+  const [signalOpen, setSignalOpen] = useState(false);
+  const quick = useRef(false);
+  const prevTactics = useRef<[Tactic, Tactic] | null>(null);
+  const parsed = useMemo(() => parse(log), [log]);
+  const feed = useMemo(() => (mode === 'highlight' ? highlightFeed(parsed) : parsed), [parsed, mode]);
   const setsWon: [number, number] = [sets.filter(x => x[0] > x[1]).length, sets.filter(x => x[1] > x[0]).length];
 
   function step(inp?: StepInput) {
@@ -215,6 +232,7 @@ export function LiveMatchView({ live, speed: speed0 = 0, onDone }: { live: LiveM
     let sent = inp ?? input.current;
     input.current = undefined;
     if (!inp && wantTO && last.current === 'point') { sent = { timeout: true }; setWantTO(false); }
+    if (!inp && signal && last.current === 'point') { sent = { ...sent, tactic: signal }; setSignal(null); }
     const r = live.steps.next(sent);
     if (r.done) {
       live.result = r.value;
@@ -228,6 +246,11 @@ export function LiveMatchView({ live, speed: speed0 = 0, onDone }: { live: LiveM
     setScore(e.score);
     if (e.setNo !== setNo) { setSetNo(e.setNo); setToLeft(2); }
     if (e.type === 'point') {
+      quick.current = mode === 'highlight' && !isHighlight(e);
+      const prev = prevTactics.current, opp = 1 - us;
+      if (prev) setOppChanged((Object.keys(e.tactics[opp]) as (keyof Tactic)[]).filter(k => e.tactics[opp][k] !== prev[opp][k]));
+      prevTactics.current = e.tactics;
+      setTactics(e.tactics);
       if (e.score[0] !== e.score[1] && Math.max(...e.score) >= (e.setNo === 5 ? 15 : 25) && Math.abs(e.score[0] - e.score[1]) >= 2) setSets(x => [...x, e.score]);
     } else {
       if (e.by === us) setToLeft(e.view.timeoutsLeft);
@@ -237,7 +260,7 @@ export function LiveMatchView({ live, speed: speed0 = 0, onDone }: { live: LiveM
 
   useEffect(() => {
     if (finished || brk || paused) return;
-    const t = window.setTimeout(() => step(), SPEEDS[speed][0]);
+    const t = window.setTimeout(() => step(), mode === 'highlight' ? (quick.current ? 15 : 1100) : SPEEDS[speed][0]);
     return () => window.clearTimeout(t);
   });
   const doneOnce = useRef(false);
@@ -267,7 +290,7 @@ export function LiveMatchView({ live, speed: speed0 = 0, onDone }: { live: LiveM
       <button className="sp" aria-label={paused ? '재생' : '일시정지'} onClick={() => setPaused(p => !p)}>{paused ? '▶' : 'Ⅱ'}</button>
       <button className="btn blue3d sm" style={{ minHeight: 38 }} disabled={toLeft <= 0 || wantTO} onClick={() => setWantTO(true)}>{wantTO ? '다음 랠리 후 작전 타임' : `작전 타임 ${toLeft}/2`}</button>
       <span className="grow" />
-      {SPEEDS.map(([, n], k) => <button key={n} className="sp" aria-pressed={speed === k} onClick={() => setSpeed(k)}>{n}</button>)}
+      {mode === 'full' ? SPEEDS.map(([, n], k) => <button key={n} className="sp" aria-pressed={speed === k} onClick={() => setSpeed(k)}>{n}</button>) : <span className="tag purple">하이라이트</span>}
       <button className="btn orange sm" style={{ minHeight: 38, marginLeft: 4 }} onClick={skip}><Icon name="ff" />스킵</button>
     </div>}>
       <section className="card">
@@ -287,10 +310,60 @@ export function LiveMatchView({ live, speed: speed0 = 0, onDone }: { live: LiveM
         <span className="ball" style={{ left: `${ball[0]}%`, top: `${ball[1]}%` }} />
       </div>
       <div className="setline row wrap" style={{ gap: 6 }}>{sets.map((x, k) => <span key={k} className="tag">{k + 1}세트 {x[0]}:{x[1]}</span>)}</div>
-      <p className="tiny muted" style={{ margin: 0 }}>작전 타임(세트당 2번)과 테크니컬 타임아웃(1~4세트 8점·16점), 세트 사이마다 경기가 멈추고 작전과 선수를 바꿀 수 있어요.</p>
+      {mode === 'full' && tactics && (
+        <section className="card">
+          <div className="row between"><b className="small">상대 작전 (실시간){oppChanged.length > 0 && <span className="tag orange" style={{ marginLeft: 6 }}>방금 변경</span>}</b>
+            <button className="btn xs orange" disabled={finished} onClick={() => { setPaused(true); setSignalOpen(true); }}>{signal ? '지시 대기 중' : '작전 지시'}</button></div>
+          <div className="row wrap" style={{ gap: 6 }}>
+            {TACTIC_INFO.filter(a => !a.when || a.when(tactics[1 - us])).map(a => <span key={a.key} className={`tag ${oppChanged.includes(a.key) ? 'orange' : 'blue'}`}>{a.name}: {optName(a.key, tactics[1 - us][a.key] ?? (a.key === 'aim' ? 'weak' : a.key === 'trick' ? 'none' : ''))}</span>)}
+          </div>
+          {signal && <span className="tiny c-orange">다음 랠리부터 적용: {(Object.keys(signal) as (keyof Tactic)[]).map(k => optName(k, signal[k])).join(', ')}</span>}
+        </section>
+      )}
+      <p className="tiny muted" style={{ margin: 0 }}>{mode === 'full'
+        ? '풀 중계: 상대 작전이 바뀌는 걸 보면서 "작전 지시"로 언제든 작전을 바꿀 수 있어요 (다음 랠리부터). 교체는 작전 타임·테크니컬 타임아웃·세트 사이에.'
+        : '하이라이트: 연속 득점·접전·세트 포인트만 보여줍니다. 작전 타임(세트당 2번), 테크니컬 타임아웃, 세트 사이에 멈춰서 작전과 선수를 바꿀 수 있어요.'}</p>
       <section className="card"><h2>문자 중계</h2><FeedList feed={feed} us={us} /></section>
       {brk && <BreakPanel e={brk} us={us} onResume={plan => { setBrk(null); step(plan); }} onAuto={skip} />}
+      {signalOpen && tactics && <SignalSheet cur={tactics[us]} onClose={() => { setSignalOpen(false); setPaused(false); }} onSend={t => { setSignal(t); setSignalOpen(false); setPaused(false); }} />}
     </Overlay>
+  );
+}
+
+/** in highlight mode: set markers, coaching notes and the rallies worth seeing */
+function highlightFeed(feed: Feed[]): Feed[] {
+  const out: Feed[] = [];
+  let run = 0, lastW = -1;
+  for (const f of feed) {
+    if (f.kind !== 'pt') { out.push(f); if (f.kind === 'set') { run = 0; lastW = -1; } continue; }
+    run = f.p.winner === lastW ? run + 1 : 1;
+    lastW = f.p.winner;
+    if (isHighlight({ setNo: f.p.set, score: f.p.score, run })) out.push(f);
+  }
+  return out;
+}
+
+/** 벤치 작전 지시: change the plan without waiting for a timeout (full broadcast only) */
+function SignalSheet({ cur, onClose, onSend }: { cur: Tactic; onClose(): void; onSend(t: Partial<Tactic>): void }) {
+  const [draft, setDraft] = useState<Tactic>({ ...cur, aim: cur.aim ?? 'weak', trick: cur.trick ?? 'none' });
+  const changed = (Object.keys(draft) as (keyof Tactic)[]).filter(k => draft[k] !== (cur[k] ?? (k === 'aim' ? 'weak' : k === 'trick' ? 'none' : undefined)));
+  const send = () => {
+    const t: Partial<Tactic> = {};
+    for (const k of changed) (t as Record<string, unknown>)[k] = draft[k];
+    if (changed.length) onSend(t); else onClose();
+  };
+  return (
+    <Sheet title="작전 지시 (다음 랠리부터)" onClose={onClose}>
+      {TACTIC_INFO.filter(a => !a.when || a.when(draft)).map(a => (
+        <div key={a.key} className="stack" style={{ gap: 4 }}>
+          <b className="small">{a.name}{changed.includes(a.key) && <span className="tag orange" style={{ marginLeft: 6 }}>변경</span>}</b>
+          <div className="seg">
+            {Object.entries(a.opts).map(([val, o]) => <button key={val} aria-pressed={String(draft[a.key]) === val} onClick={() => setDraft(d => ({ ...d, [a.key]: a.key === 'reception' ? Number(val) : val }))}>{o.name}</button>)}
+          </div>
+        </div>
+      ))}
+      <button className="btn orange block" onClick={send}>{changed.length ? `${changed.length}개 지시하기` : '닫기'}</button>
+    </Sheet>
   );
 }
 

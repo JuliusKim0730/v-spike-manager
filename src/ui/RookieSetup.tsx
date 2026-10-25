@@ -1,0 +1,109 @@
+/** 신인감독모드 start: club name and colour, then the staff draft (design/ROOKIE-MODE.md §6) */
+import { useMemo, useState } from 'react';
+import type { Career } from '../game/career.ts';
+import { newRookie, STAFF_LIMIT, STAFF_ROLE, staffCheck, staffPool, type Staff, type StaffRole } from '../game/rookie.ts';
+import { slotInfo, SLOTS } from '../game/storage.ts';
+import { CrestArt, TitleScene } from './art.tsx';
+import { Icon } from './common.tsx';
+
+/** 인트로 (Julius 2026-10-25): 은퇴한 레전드 K가 방송사의 제의를 받는다 */
+const STORY: string[] = [
+  '은퇴한 전설적인 여자배구 선수, K.',
+  '코트를 떠난 지 몇 해가 지난 어느 날, 한 방송사에서 연락이 온다.\n"8번째 구단 창단에 도전하는 팀의 감독을 맡아 주시겠어요?"',
+  '그녀는 자신이 사랑하는 여자배구가 다시 흥행하기를 바랐다.\n그리고 충분한 기량이 있는데도 기회를 받지 못하는 후배들이 늘 마음에 걸렸다.',
+  '그래서 K는 제의를 받아들인다.\n63일. 7번의 경기. 이제 감독 K의 이야기가 시작된다.',
+];
+
+const COLORS = ['#f8731c', '#7c5cff', '#1e6fe8', '#e2384d', '#1f9d55', '#0aa5c9', '#e0559b', '#4b5563'];
+
+export function RookieSetup({ onBack, onStart }: { onBack(): void; onStart(c: Career): void }) {
+  const [seed] = useState(() => Math.floor(Math.random() * 2 ** 31));
+  const pool = useMemo(() => staffPool(seed), [seed]);
+  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [page, setPage] = useState(0);
+  const [name, setName] = useState('서울 언더독스');
+  const [short, setShort] = useState('언더독스');
+  const [color, setColor] = useState(COLORS[0]);
+  const free = SLOTS.find(s => !slotInfo(s));
+  const [slot, setSlot] = useState(free ?? 0);
+  const [hired, setHired] = useState<Staff[]>([]);
+  const cost = hired.reduce((a, s) => a + s.cost, 0);
+  const err = staffCheck(hired);
+  const toggle = (s: Staff) => {
+    const same = hired.find(h => h.role === s.role);
+    setHired(same?.id === s.id ? hired.filter(h => h !== same) : [...hired.filter(h => h.role !== s.role), s]);
+  };
+  const okName = name.trim().length >= 2 && short.trim().length >= 1;
+  if (step === 0) {
+    const last = page === STORY.length - 1;
+    return (
+      <div className="title-wrap story" onClick={() => (last ? setStep(1) : setPage(page + 1))}>
+        <div className="title-scene"><TitleScene /></div>
+        <div className="story-body gutter">
+          <button className="story-skip" onClick={e => { e.stopPropagation(); setStep(1); }}>건너뛰기</button>
+          <p key={page} className="story-text">{STORY[page]}</p>
+          <div className="story-dots" aria-hidden="true">{STORY.map((_, i) => <i key={i} className={i === page ? 'on' : ''} />)}</div>
+          <span className="story-next">{last ? '탭해서 시작하기' : '탭해서 계속'}</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="app">
+      <div className="subbar gutter">
+        <button className="icon-btn" onClick={step === 1 ? onBack : () => setStep(1)} aria-label="뒤로"><Icon name="back" /></button>
+        <b className="grow ov-title">신인감독모드 · {step === 1 ? '구단 만들기' : '스태프 드래프트'}</b>
+      </div>
+      <main className="content gutter" style={{ paddingBottom: 32 }}>
+        {step === 1 && <>
+          <section className="card">
+            <p className="small" style={{ margin: 0 }}>V-리그 8번째 구단을 꿈꾸는 신생팀의 감독이 되었습니다. <b>63일</b> 동안 트라이아웃으로 선수를 뽑고, 1부·해외·고교-대학 팀과 <b>7번의 공식전</b>을 치러 방송 시청률과 성적으로 창단 기업을 설득하세요.</p>
+          </section>
+          <section className="card">
+            <div className="section-title">1 · 구단 이름</div>
+            <input className="input" value={name} maxLength={16} onChange={e => setName(e.target.value)} aria-label="구단 이름" />
+            <div className="section-title">약칭 (중계·순위표)</div>
+            <input className="input" value={short} maxLength={6} onChange={e => setShort(e.target.value)} aria-label="약칭" />
+            <div className="section-title">2 · 팀 컬러</div>
+            <div className="row wrap" style={{ gap: 8 }}>
+              {COLORS.map(col => <button key={col} className="swatch" aria-pressed={color === col} aria-label={col} onClick={() => setColor(col)} style={{ background: col }} />)}
+            </div>
+            <div className="row" style={{ gap: 10 }}><CrestArt color={color} letter={short[0] ?? '?'} size={44} /><b>{name}</b></div>
+            <div className="section-title">저장 슬롯</div>
+            <div className="seg">{SLOTS.map(s => <button key={s} aria-pressed={slot === s} onClick={() => setSlot(s)}>슬롯 {s + 1}{slotInfo(s) ? ' (덮어씀)' : ''}</button>)}</div>
+          </section>
+          <button className="btn go block" disabled={!okName} onClick={() => setStep(2)}>스태프 드래프트로</button>
+        </>}
+        {step === 2 && <>
+          <section className="card">
+            <p className="small" style={{ margin: 0 }}>직책마다 한 명씩, 최대 <b>{STAFF_LIMIT.heads}명</b>을 <b>{STAFF_LIMIT.budget}억</b> 안에서 고용합니다. 전원 S급은 불가능해요. 스태프 계약금은 시작 자금 5억에서 나갑니다.</p>
+            <div className="row between small"><span>고용 {hired.length}/{STAFF_LIMIT.heads}명</span><b className={cost > STAFF_LIMIT.budget ? 'c-red' : 'c-blue'}>{cost.toFixed(2)} / {STAFF_LIMIT.budget}억</b></div>
+            <div className="progress"><div className="track"><i style={{ width: `${Math.min(100, (cost / STAFF_LIMIT.budget) * 100)}%` }} /></div></div>
+          </section>
+          {(Object.keys(STAFF_ROLE) as StaffRole[]).map(role => (
+            <section key={role} className="card">
+              <div className="row between"><h2>{STAFF_ROLE[role][0]}</h2><span className="tiny muted">{STAFF_ROLE[role][1]}</span></div>
+              <div className="list">
+                {pool.filter(s => s.role === role).map(s => {
+                  const on = hired.some(h => h.id === s.id);
+                  return (
+                    <button key={s.id} className="item" aria-pressed={on} onClick={() => toggle(s)} style={on ? { background: 'var(--blue-soft)' } : undefined}>
+                      <span className={`grade ${s.grade}`}>{s.grade}</span>
+                      <div className="grow"><b>{s.name}</b><div className="tiny muted">{s.note}</div></div>
+                      <b className="small">{s.cost.toFixed(2)}억</b>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+          {err && <p className="tag bad" style={{ whiteSpace: 'normal' }}>{err}</p>}
+          {!hired.some(h => h.role === 'coach') && <p className="tiny muted" style={{ margin: 0 }}>수석코치가 없으면 성장이 느리고 트라이아웃 추천이 자주 빗나갑니다.</p>}
+          <button className="btn go block" disabled={!!err} onClick={() => onStart(newRookie({ slot, name: name.trim(), short: short.trim(), color, staff: hired, seed }))}>
+            트라이아웃 열기
+          </button>
+        </>}
+      </main>
+    </div>
+  );
+}
