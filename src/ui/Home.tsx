@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FreeChoice, Career } from '../game/career.ts';
 import {
-  advance, AXES, canTrade, clubColor, clubShort, clubStarters, DIV_NAME, finance, nextFixture, ovr, phaseLabel, PRESETS, scoutTactic,
+  advance, AXES, canTrade, clubColor, clubShort, clubStarters, DIV_NAME, finance, nextFixture, ovr, phaseLabel, potEstimate, PRESETS, scoutLevel, scoutTactic,
   seasonProgress, standings, starterAvg, userClub, userDraftPick, userInPlayoffs, userOnTheClock, clubName, recommendOn, scoutKnown, userTeam,
 } from '../game/career.ts';
 import { RecommendPanel, ReportCard } from './Assist.tsx';
 import { Avatar } from './art.tsx';
+import { effectiveLevel, staffOf } from '../engine/league/staff.ts';
+import { SKILL_BY_ID } from '../engine/skills.ts';
 import { Crest, Fold, Grade, Icon, Overlay, Ovr, Pos, POS_KO, money, useGame } from './common.tsx';
 import type { LiveMode } from './Match.tsx';
 
@@ -365,10 +367,10 @@ function PreMatch({ onClose }: { onClose(): void }) {
         </div>
       </section>
       <section className="card">
-        <div className="row between"><b className="small">상대 작전 · 전력분석실 {club.facilities.analysis}단계</b></div>
+        <div className="row between"><b className="small">상대 작전 · 전력분석실 효과 {effectiveLevel(club, 'analysis')}단계</b></div>
         <div className="row wrap" style={{ gap: 6 }}>{scout.map((v, i) => <span key={i} className={`tag ${v ? 'blue' : ''}`}>{AXES[i]}: {v ?? '?'}</span>)}</div>
         <div className="row between small"><span>우리 작전 <b>{preset}</b>{c.autoCoach ? ' · 자동 대응' : ''}</span><button className="btn xs" onClick={() => { onClose(); g.setTab('tactics'); }}>바꾸기</button></div>
-        {recommendOn(c) && <Fold title="수석코치 한마디"><span className="small">{coachTip(c, scout)}</span></Fold>}
+        {recommendOn(c) && (() => { const hc = staffOf(club, 'head')[0]; return <Fold title={hc ? `수석코치 ${hc.name} 한마디` : '수석코치 없음'}><span className="small">{hc ? coachTip(c, scout) : '수석코치가 없어 경기 준비 조언을 받을 수 없습니다. 훈련시설에서 고용하세요.'}</span></Fold>; })()}
       </section>
       <RecommendPanel me={userTeam(c).starters} them={clubStarters(c, f.opp)} known={scoutKnown(c, f.opp)} ourOvr={starterAvg(club)} oppOvr={starterAvg(opp)} onEdit={() => { onClose(); g.setTab('tactics'); }} />
       <div className="lineups">
@@ -422,6 +424,7 @@ function Foreign() {
           <button key={p.id} className="choice" aria-pressed={c.foreignPick === i} onClick={() => { c.foreignPick = i; refresh(); }}>
             <div className="row" style={{ width: '100%' }}><Grade v={ovr(p)} /><b className="grow">{p.name}</b><Ovr v={ovr(p)} /></div>
             <span>{p.age}세 · {p.height}cm · 스파이크 {Math.round(p.tech.spike)} · 연봉 {p.salary}억</span>
+            <span className="tiny">{scoutLevel(c) >= 3 ? `스킬: ${p.skills.map(id => SKILL_BY_ID.get(id)?.name).filter(Boolean).join(', ') || '없음'}` : '스킬: ? (스카우트센터 효과 3단계부터)'}</span>
           </button>
         ))}
         <button className="choice" aria-pressed={c.foreignPick === -1} onClick={() => { c.foreignPick = -1; refresh(); }}><b>용병 없이 시즌 치르기</b><span>연봉을 아끼고 국내 선수로 버팁니다</span></button>
@@ -438,9 +441,9 @@ function Draft() {
   const onClock = userOnTheClock(c);
   const mine = d?.picks.filter(p => p.club === c.userId) ?? [];
   const pool = (d?.pool ?? []).filter(p => pos === 'all' || p.position === pos)
-    .sort((a, b) => (b.potPhys + b.potTech) - (a.potPhys + a.potTech)).slice(0, 25);
+    .sort((a, b) => potEstimate(c, b) - potEstimate(c, a)).slice(0, 25);
   return (
-    <Turn title="신인 드래프트" desc={onClock ? `${d!.round + 1}라운드, 우리 차례입니다. 3부 하위 팀부터 지명합니다. 잠재 등급은 스카우트 추정치입니다.` : '드래프트가 끝났습니다.'}>
+    <Turn title="신인 드래프트" desc={onClock ? `${d!.round + 1}라운드, 우리 차례입니다. 3부 하위 팀부터 지명합니다. 잠재 등급은 스카우트 추정치입니다 (스카우트센터 효과 ${scoutLevel(c)}단계${scoutLevel(c) >= 5 ? ', 정확' : ''}).` : '드래프트가 끝났습니다.'}>
       {mine.length > 0 && <div className="row wrap" style={{ gap: 6 }}>{mine.map(m => <span key={m.id} className="tag good">{m.round}R {m.name}</span>)}</div>}
       {onClock && (
         <>
@@ -450,7 +453,7 @@ function Draft() {
               <div key={p.id} className="item">
                 <Pos p={p.position} />
                 <div className="grow"><b>{p.name}</b><div className="tiny muted">{p.age}세 · {p.height}cm · 현재 OVR {ovr(p)}</div></div>
-                <div className="stack" style={{ alignItems: 'center', gap: 0 }}><span className="tiny muted">잠재</span><Grade v={(p.potPhys + p.potTech) / 2} /></div>
+                <div className="stack" style={{ alignItems: 'center', gap: 0 }}><span className="tiny muted">잠재</span><Grade v={potEstimate(c, p)} /></div>
                 <button className="btn sm primary" disabled={busy} onClick={() => { userDraftPick(c, p); toast(`${p.name} 지명`); refresh(); }}>지명</button>
               </div>
             ))}

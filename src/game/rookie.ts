@@ -233,7 +233,7 @@ function fillClub(r: Rng, club: Club, target: number, n: number, ageLo: number, 
 function blankClub(id: number, name: string, division: 0 | 1 | 2): Club {
   return {
     id, name, division, budgetFactor: 1, personality: 'balanced', roster: [],
-    facilities: { stadium: 0, training: 3, medical: 1, restaurant: 1, bus: 3, analysis: 0 },
+    facilities: { stadium: 0, training: 3, medical: 1, restaurant: 1, bus: 3, analysis: 0, scout: 0 },
     fans: 1000, cash: 0, deficitStreak: 0, wins: 0, losses: 0, points: 0, setsWon: 0, setsLost: 0, streak: 0, injuries: 0,
     income: 0, expense: 0, balancePct: 0, transferNet: 0, forcedSales: 0, parachute: 0, lastRank: 8,
   };
@@ -305,12 +305,12 @@ export function newRookie(o: RookieOpts): Career {
   const world: World = { year: 1, clubs, freeAgents: [], retired: [], history: [] };
 
   const c: Career = {
-    version: 1, slot: o.slot, savedAt: Date.now(), seed, rng: seed ^ 0xabcdef,
+    version: 2, slot: o.slot, savedAt: Date.now(), seed, rng: seed ^ 0xabcdef,
     ids: { ...ID_SEQ }, world, userId: USER, games: 28, funding: 1,
     phase: { k: 'free', n: 1 }, days: [], day: 0,
     tactic: { ...DEFAULT_TACTIC }, preset: 'custom', lineup: [null, null, null, null, null, null, null], autoCoach: true,
     sponsor: null, trust: 50, growthUnits: 0, news: [], lastMatch: null, results: [], playoffs: null, stats: {},
-    awards: [], retiredNews: [], expiring: [], foreignOptions: [], foreignPick: -1, draft: null, seasons: [], turnNo: 1, finishes: {},
+    awards: [], retiredNews: [], expiring: [], foreignOptions: [], foreignPick: -1, draft: null, seasons: [], turnNo: 1, finishes: {}, staffPool: [],
     mode: 'rookie', names,
     rookie: {
       day: 1, setup: { short: o.short, color: o.color }, staff: o.staff, tryout: null, revealed: false, schedule: [], games: [],

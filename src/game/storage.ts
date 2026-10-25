@@ -1,5 +1,5 @@
 /** Save slots (GDD 1: 계정당 3개). Guest saves live in this browser until accounts arrive. */
-import type { Career } from './career.ts';
+import { migrate, type Career } from './career.ts';
 import { DEFAULT_TACTIC, ID_SEQ } from '../engine/player.ts';
 
 const KEY = (slot: number) => `vbm.save.${slot}`;
@@ -27,6 +27,8 @@ export function loadCareer(slot: number): Career | null {
     const c = JSON.parse(raw) as Career;
     c.tactic = { ...DEFAULT_TACTIC, ...c.tactic }; // saves before 목적타 구역·세트 플레이
     ID_SEQ.player = c.ids.player; ID_SEQ.pro = c.ids.pro;
+    if (c.version < 2 && c.mode !== 'rookie') migrate(c); // staff + scout center (신인감독모드 has its own staff)
+    c.staffPool ??= [];
     return c;
   } catch { return null; }
 }

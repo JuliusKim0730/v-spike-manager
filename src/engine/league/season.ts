@@ -9,6 +9,7 @@ import { askingSalary } from './contract.ts';
 import { rollSkill, skillSlots, startingSkills } from '../skills.ts';
 import { budgetOf, payroll, randomAge, signPro } from './world.ts';
 import type { Club, Facility, Grade, GrowthType, Pro, SeasonRecord, World } from './types.ts';
+import { categoryMult, gateMult, headCoach, medicalEff, staffExtra, upkeepMult } from './staff.ts';
 
 const POS: Position[] = ['S', 'OP', 'OH', 'MB', 'L'];
 
@@ -93,10 +94,11 @@ export function afterMatch(rng: Rng, c: Club, starters: Pro[], won: boolean, set
       p.condition += won ? 2 : -1;
       // injury (GDD 7.4)
       let risk = sets * RULES.injuryPerSet * (p.energy < 30 ? 3 : 1) * (p.condition < 35 ? 1.15 : 1)
-        * (1.1 - p.phys.flexibility / 500) * RULES.medicalMult[c.facilities.medical];
+        * (1.1 - p.phys.flexibility / 500) * RULES.medicalMult[c.facilities.medical] / medicalEff(c);
       if (rng.chance(risk)) {
         const r = rng.next();
         p.injured = r < 0.8 ? rng.int(1, 2) : r < 0.98 ? rng.int(3, 8) : remaining + 20;
+        if (c.staff) p.injured = Math.max(1, Math.round(p.injured / medicalEff(c)));
         c.injuries++;
       }
     } else {
@@ -116,9 +118,9 @@ export function afterMatch(rng: Rng, c: Club, starters: Pro[], won: boolean, set
 
 // ───────────────────────── growth checkpoints (GDD 6.1) ─────────────────────────
 
-/** Growth environment of a club: training facility × coach (GDD 6.2, best = 1.0) */
+/** Growth environment of a club: training facility × head coach (GDD 6.2, best = 1.0) */
 export function clubGrowthMult(c: Club): number {
-  return RULES.trainingMult[c.facilities.training] * RULES.coachMult[c.coach ?? RULES.defaultCoach[c.division]];
+  return RULES.trainingMult[c.facilities.training] * RULES.coachMult[headCoach(c)];
 }
 
 /** Playing time (Julius 2026-10-17): starters grow fastest, 2군 and unused players slower */
@@ -132,12 +134,13 @@ export function playMult(c: Club, p: Pro): number {
 
 export function growClub(c: Club, share: number, offseasonUnits?: number) {
   const env = clubGrowthMult(c);
+  const cat = categoryMult(c);
   for (const p of c.roster) {
     if (p.foreign) continue;
     let gp = seasonGP(p, env) * share;
     if (offseasonUnits !== undefined) gp *= Math.min(6, offseasonUnits) / 6;
     else gp *= playMult(c, p);
-    spendGP(p, gp, trainModeFor(p));
+    spendGP(p, gp, trainModeFor(p), cat);
     notePeak(p);
     p.segGames = 0; p.segPlayed = 0;
   }
@@ -171,13 +174,13 @@ export function settleBooks(c: Club, finish: number, homeGames: number) {
   const winPct = c.wins / Math.max(1, c.wins + c.losses);
   const seats = RULES.stadiumSeats[c.facilities.stadium];
   const crowd = Math.min(seats, c.fans * 0.15 * (0.7 + 0.6 * winPct));
-  const tickets = homeGames * crowd * RULES.ticketPrice[c.division];
-  const goods = c.fans * RULES.goodsPerFan;
+  const tickets = homeGames * crowd * RULES.ticketPrice[c.division] * gateMult(c);
+  const goods = c.fans * RULES.goodsPerFan * gateMult(c);
   const prize = finish <= 4 ? RULES.prize[c.division][finish - 1] : 0;
   const sponsor = base * (1 + RULES.sponsorPerf * (1 - 2 * (c.lastRank - 1) / 7));
   const income = sponsor + tickets + goods + prize;
-  const maint = 0.01 * base * Object.values(c.facilities).reduce((a, b) => a + b, 0);
-  const expense = payroll(c) + RULES.opsShare[c.division] * base + maint + [2, 1, 0.5][c.division];
+  const maint = 0.01 * base * Object.values(c.facilities).reduce((a, b) => a + b, 0) * upkeepMult(c);
+  const expense = payroll(c) + RULES.opsShare[c.division] * base + staffExtra(c) + maint + [2, 1, 0.5][c.division];
   c.income = income; c.expense = expense;
   c.balancePct = 100 * (income - expense) / base;
   c.cash += income - expense;
@@ -187,7 +190,7 @@ export function settleBooks(c: Club, finish: number, homeGames: number) {
 
 export function invest(c: Club) {
   const reserve = RULES.reserveShare[c.personality] * budgetOf(c);
-  const order: Facility[] = ['training', 'medical', 'restaurant', 'stadium', 'analysis', 'bus'];
+  const order: Facility[] = ['training', 'medical', 'restaurant', 'stadium', 'analysis', 'scout', 'bus'];
   for (const f of order) {
     const lvl = c.facilities[f];
     if (lvl >= 5) continue;
