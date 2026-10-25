@@ -14,6 +14,7 @@ npm run test:engine    # 커리어 루프 2시즌 헤드리스 실행
 |---|---|
 | `src/engine/` | engine-prototype 복사본. 바꾼 곳: id 카운터를 `ID_SEQ`로 (세이브 복원), `Rng.state`, season.ts 함수 export, match.ts 점수 마커 `§a:b:w` (문자 중계용), skills.ts `process.env` 제거 |
 | `src/game/career.ts` | 턴 루프 (GDD 3): 시즌 준비 → 전지훈련 → 자유 턴 3 → 스폰서 → 정규리그 (올스타) → 포스트시즌 → 결산 → 시상식 → 은퇴 → 내부 FA → 외부 FA → 용병 → 드래프트 → 다음 시즌 |
+| `src/game/rookie.ts` | 신인감독모드 (`../design/ROOKIE-MODE.md`): 63일 · 트라이아웃 · 공식전 7경기 · 시청률 · 기업 매칭 엔딩. 화면은 `src/ui/Rookie*.tsx`, 밸런스는 `scripts/rookie-sim.ts` |
 | `src/game/storage.ts` | 세이브 슬롯 3개 (localStorage, 게스트) |
 | `src/game/names.ts` | 가상 구단 24개, 한국 이름 생성 |
 | `src/ui/` | 화면: 홈(이번 턴) · 선수단 · 작전 · 순위 · 구단, 경기 중계, FA 시장, 선수 카드 |

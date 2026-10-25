@@ -18,7 +18,8 @@ import {
   invest, learnSkills, needScore, rankDivision, releaseTo, retirements, schedule, settleBooks, transfers, NEED,
 } from '../engine/league/season.ts';
 import type { Club, Facility, Grade, Pro, World } from '../engine/league/types.ts';
-import { CLUBS, foreignName, koreanName } from './names.ts';
+import { CLUBS, clubInfo, foreignName, koreanName, type ClubInfo } from './names.ts';
+import type { RookieState } from './rookie.ts';
 
 export type PhaseKind =
   | 'prep' | 'camp' | 'free' | 'sponsor'
@@ -94,14 +95,19 @@ export interface Career {
   seasons: SeasonSummary[];
   turnNo: number;
   finishes: Record<number, number>; // last season finish by club (1 = champion)
+  /** 신인감독모드: its own turn loop in rookie.ts; the fields above keep the shared screens (선수단·팀관리·중계) working */
+  mode?: 'rookie';
+  rookie?: RookieState;
+  /** club names for this save (신인감독모드 has its own 24 clubs) */
+  names?: ClubInfo[];
 }
 
 // ───────────────────────── helpers ─────────────────────────
 
 export const userClub = (c: Career) => c.world.clubs[c.userId];
-export const clubName = (id: number) => CLUBS[id].name;
-export const clubShort = (id: number) => CLUBS[id].short;
-export const clubColor = (id: number) => CLUBS[id].color;
+export const clubName = (id: number) => clubInfo(id).name;
+export const clubShort = (id: number) => clubInfo(id).short;
+export const clubColor = (id: number) => clubInfo(id).color;
 export const DIV_NAME = ['1부', '2부', '3부'];
 const rngOf = (c: Career) => { const r = new Rng(1); r.state = c.rng; return r; };
 const saveRng = (c: Career, r: Rng) => { c.rng = r.state; };
@@ -292,7 +298,7 @@ function teamFor(c: Career, id: number) {
   return t;
 }
 
-function boxOf(res: ReturnType<typeof playMatch>, teams: [Team, Team]): BoxLine[] {
+export function boxOf(res: ReturnType<typeof playMatch>, teams: [Team, Team]): BoxLine[] {
   const out: BoxLine[] = [];
   teams.forEach((t, side) => {
     const ps = [...t.lineup, t.libero, ...(t.bench ?? [])];
@@ -746,10 +752,14 @@ export function signFA(c: Career, p: Pro): string | null {
   return null;
 }
 
+/** 신인감독모드 minimum squad: one of each starting spot */
+export const ROOKIE_MIN: Record<Position, number> = { S: 1, OH: 2, MB: 2, OP: 1, L: 1 };
+
 export function releasePlayer(c: Career, p: Pro): string | null {
   const club = userClub(c);
-  if (club.roster.filter(q => q.position === p.position && !q.foreign).length <= (NEED[p.position] ?? 0) && !p.foreign)
-    return `${p.position} 최소 인원(${NEED[p.position]}명) 아래로는 방출할 수 없습니다.`;
+  const need = (c.mode === 'rookie' ? ROOKIE_MIN : NEED)[p.position] ?? 0;
+  if (club.roster.filter(q => q.position === p.position && !q.foreign).length <= need && !p.foreign)
+    return `${p.position} 최소 인원(${need}명) 아래로는 방출할 수 없습니다.`;
   releaseTo(c.world, club, p);
   c.lineup = c.lineup.map(id => (id === p.id ? null : id));
   addNews(c, `${p.name} 방출`, 'info');

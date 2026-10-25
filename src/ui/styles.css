@@ -369,3 +369,16 @@ a.item .chev svg { width: 100%; height: 100%; }
 .opt-help { font-size: 12.5px; background: var(--surface-2); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
 .opt-help .good { color: var(--green); }
 .opt-help .weak { color: var(--red); }
+
+/* ── 신인감독모드 ── */
+.tbtn.rookie { background: var(--purple); color: #fff; box-shadow: 0 4px 0 #4b2fb8; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1.15; }
+.tbtn.rookie span { font-size: 12px; font-weight: 700; opacity: .9; }
+.input { width: 100%; min-height: 44px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; font-size: 16px; padding: 8px 12px; }
+.input:focus { outline: none; border-color: var(--blue); }
+.swatch { width: 36px; height: 36px; border-radius: 50%; border: 3px solid var(--surface); box-shadow: 0 0 0 2px var(--line); }
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--fg); }
+.item.tryout { align-items: center; gap: 8px; }
+.rbars { display: flex; align-items: flex-end; gap: 6px; height: 120px; }
+.rbar { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 2px; }
+.rbar i { display: block; width: 100%; max-width: 28px; border-radius: 6px 6px 2px 2px; background: var(--purple); min-height: 3px; }
+.nav button:disabled { opacity: .35; }

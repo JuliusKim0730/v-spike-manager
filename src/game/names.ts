@@ -1,7 +1,9 @@
 /** Fictional clubs and Korean player names (GDD 1: 가상의 24개 구단) */
 import type { Rng } from '../engine/rng.ts';
 
-export const CLUBS: { name: string; short: string; color: string }[] = [
+export interface ClubInfo { name: string; short: string; color: string }
+
+export const CLUBS: ClubInfo[] = [
   // 1부
   { name: '수원 오로라', short: '오로라', color: '#7c5cff' },
   { name: '인천 블루웨이브', short: '블루웨이브', color: '#1e6fe8' },
@@ -30,6 +32,11 @@ export const CLUBS: { name: string; short: string; color: string }[] = [
   { name: '순천 그린리프', short: '그린리프', color: '#16a34a' },
   { name: '속초 시호크스', short: '시호크스', color: '#475569' },
 ];
+
+/** Which club names the UI shows: career mode uses CLUBS, 신인감독모드 brings its own 24 (see rookie.ts) */
+let TABLE: ClubInfo[] = CLUBS;
+export const setClubTable = (t: ClubInfo[] | undefined) => { TABLE = t ?? CLUBS; };
+export const clubInfo = (id: number): ClubInfo => TABLE[id] ?? CLUBS[0];
 
 const SURNAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임', '한', '오', '서', '신', '권', '황', '안', '송', '류', '전', '홍', '고', '문', '양', '손', '배', '백', '허', '남', '심', '노', '하', '곽', '성', '차', '주', '우', '구', '민', '진', '나', '지', '채', '원', '천', '방', '현', '변', '염', '도'];
 const SUR_W = SURNAMES.map((_, i) => (i < 5 ? 12 - i * 1.5 : i < 15 ? 3 : 1));
