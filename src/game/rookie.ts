@@ -18,7 +18,8 @@ import { askingSalary } from '../engine/league/contract.ts';
 import { afterMatch, aiTactic, buildTeam, clubGrowthMult } from '../engine/league/season.ts';
 import type { Club, Pro, World } from '../engine/league/types.ts';
 import type { Career, LiveMatch, MatchReport } from './career.ts';
-import { AIM_TXT, BLOCK_TXT, boxOf, userTeam, DEF_TXT, DIST_TXT, ROOKIE_MIN, SERVE_TXT, starterAvg, TEMPO_TXT, TRICK_TXT } from './career.ts';
+import { boxOf, knownTactic, userTeam, ROOKIE_MIN, scoutText, starterAvg } from './career.ts';
+import { diffReport, ovrExact, snapshot } from './report.ts';
 import { CLUBS, koreanName, setClubTable, type ClubInfo } from './names.ts';
 
 // ───────────────────────── data ─────────────────────────
@@ -103,12 +104,36 @@ export const MAX_SQUAD = 18;
 export const MATCH_DAYS = [14, 21, 28, 35, 42, 49, 56];
 export const LAST_DAY = 63;
 /** share of a season's GP one training day gives */
-const TRAIN_GP = 0.09;
+const TRAIN_GP = 0.1;
+/**
+ * 신인감독모드 (Julius 2026-10-25): both sides' well-chosen tactics pay off more (engine tacticBoost),
+ * and growth follows how the days are run: condition at training, wins, and tactic hits build 기세 (form).
+ */
+export const TACTIC_BOOST = 1.4;
+const FORM_MAX = 0.5;
+/** growth bonus per tactic hit in a match, capped at HIT_CAP (a well-read match lands 15–30) */
+export const HIT_GROWTH = 0.015, HIT_CAP = 0.4;
 
 // ───────────────────────── state ─────────────────────────
 
-export interface TryStat { g: number; pts: number; att: number; kills: number; recv: number; recvA: number; blocks: number; aces: number; digs: number; exec: string; jump: string }
-export interface Tryout { ids: string[]; stats: Record<string, TryStat>; recommended: string[]; picked: string[] }
+export interface TryStat { g: number; w: number; pts: number; att: number; kills: number; recv: number; recvA: number; blocks: number; aces: number; digs: number; exec: string; jump: string }
+export type TryoutSize = 12 | 24 | 36;
+/** how well the picks matched the applicants' hidden OVR, worked out when the team is confirmed */
+export interface TryoutReview { n: number; hits: number; avgPicked: number; avgBest: number; avgPool: number; ovr: Record<string, number> }
+export interface Tryout {
+  /** list = applicants shown, size and rounds can still change · played = scrimmages done, picking */
+  stage: 'list' | 'played';
+  size: TryoutSize;
+  /** scrimmage rounds: every applicant plays one 6:6 match per round */
+  rounds: number;
+  ids: string[];
+  bio: Record<string, string>;
+  stats: Record<string, TryStat>;
+  games: string[];
+  recommended: string[];
+  picked: string[];
+  review?: TryoutReview;
+}
 export interface RookieGame {
   no: number; day: number; opp: number; squad?: Squad; setsWon: [number, number]; win: boolean;
   ourOvr: number; oppOvr: number; points: number; parts: string[]; rating: number;
@@ -138,6 +163,10 @@ export interface RookieState {
   /** scout noise per player id, in OVR points (stable so the estimate doesn't jump around) */
   noise: Record<string, number>;
   ending: Ending | null;
+  /** tactic hits in the last match we played (for the 행동 리포트) */
+  lastHits?: number;
+  /** 기세: growth bonus from wins and tactic hits, fades day by day (0 … FORM_MAX) */
+  form?: number;
 }
 
 export type DayKind = 'tryout' | 'schedule' | 'free' | 'match' | 'ending';
@@ -274,15 +303,6 @@ export function newRookie(o: RookieOpts): Career {
   user.cash = ECON.startCash - o.staff.reduce((a, s) => a + s.cost, 0);
 
   const world: World = { year: 1, clubs, freeAgents: [], retired: [], history: [] };
-  // tryout applicants (hidden stats): mostly 3부 level, a few gems with growth room
-  const applicants: Pro[] = [];
-  const POS: Position[] = ['S', 'S', 'S', 'S', 'OH', 'OH', 'OH', 'OH', 'OH', 'OH', 'OH', 'OH', 'OH', 'MB', 'MB', 'MB', 'MB', 'MB', 'MB', 'MB', 'MB', 'OP', 'OP', 'OP', 'OP', 'L', 'L', 'L', 'L', 'L'];
-  for (const pos of POS) {
-    const t = Math.max(40, Math.min(62, r.normal(49, 5.5)));
-    const p = makeAt(r, pos, t, r.int(19, 27), r.chance(0.2) ? r.int(10, 16) : r.int(3, 9));
-    applicants.push(p);
-  }
-  world.freeAgents = applicants;
 
   const c: Career = {
     version: 1, slot: o.slot, savedAt: Date.now(), seed, rng: seed ^ 0xabcdef,
@@ -294,51 +314,107 @@ export function newRookie(o: RookieOpts): Career {
     mode: 'rookie', names,
     rookie: {
       day: 1, setup: { short: o.short, color: o.color }, staff: o.staff, tryout: null, revealed: false, schedule: [], games: [],
-      hype: 0, weeks: [], practice: [], deals: [], fame, noise: {}, ending: null,
+      hype: 0, weeks: [], practice: [], deals: [], fame, noise: {}, ending: null, form: 0,
     },
   };
-  runTryout(c, r, applicants);
+  makeApplicants(c, r, 24, 3);
   saveRng(c, r);
   news(c, `${o.name} 창단 프로젝트 시작. 63일 안에 8구단 창단을 증명하세요!`, 'good');
   return c;
 }
 
-// ───────────────────────── tryout (design §4) ─────────────────────────
+// ───────────────────────── tryout (design §4, Julius 2026-10-25) ─────────────────────────
 
 const EXEC_SD: Record<string, number> = { S: 3, A: 5, B: 7, C: 9, none: 12 };
+/** One 6:6 team: six applicants; a staff middle blocker fills the 7th spot so every applicant plays their own position */
+const TEAM_POS: Position[] = ['S', 'OH', 'OH', 'MB', 'OP', 'L'];
+/**
+ * Pool size trade-off: a small list is the coaches' pre-screened shortlist (better on average, few gems),
+ * a big open call is rawer with more spread and more hidden gems.
+ */
+export const TRYOUT_POOL: Record<TryoutSize, { mean: number; sd: number; gem: number; label: string; desc: string }> = {
+  12: { mean: 52, sd: 4, gem: 0.12, label: '12명 · 코치진 1차 선별', desc: '평균 실력이 높고 고르기 쉽지만 숨은 원석은 드물어요' },
+  24: { mean: 50, sd: 5, gem: 0.18, label: '24명 · 기본', desc: '실력과 원석 사이 균형' },
+  36: { mean: 49, sd: 6.2, gem: 0.25, label: '36명 · 공개 모집', desc: '편차가 크고 원석이 많지만 가려내기 어려워요' },
+};
+export const TRYOUT_ROUNDS = [1, 2, 3, 5];
+const BIO = ['대학 졸업반', '실업팀 방출', '고교 졸업 예정', '은퇴 후 복귀', '비치발리볼 출신', '해외리그 2부 출신', '대학 중퇴 후 재도전', '생활체육 리그 MVP', '부상 재활 완료', '프로 2군 출신'];
 
-/** Applicants play scrimmages among themselves; the record is what the coach sees */
-function runTryout(c: Career, r: Rng, ps: Pro[]) {
+/** Fresh applicants for the chosen size (stats hidden); replaces the previous list while it is still only a list */
+function makeApplicants(c: Career, r: Rng, size: TryoutSize, rounds: number) {
+  const old = rk(c).tryout;
+  if (old) c.world.freeAgents = c.world.freeAgents.filter(p => !old.ids.includes(p.id));
+  const q = TRYOUT_POOL[size];
+  const ps: Pro[] = [];
+  const bio: Record<string, string> = {};
+  for (let team = 0; team < size / 6; team++) {
+    for (const pos of TEAM_POS) {
+      const t = Math.max(40, Math.min(64, r.normal(q.mean, q.sd)));
+      const p = makeAt(r, pos, t, r.int(19, 27), r.chance(q.gem) ? r.int(10, 16) : r.int(3, 9));
+      bio[p.id] = BIO[r.int(0, BIO.length - 1)];
+      ps.push(p);
+    }
+  }
+  c.world.freeAgents = [...c.world.freeAgents, ...ps];
+  rk(c).tryout = { stage: 'list', size, rounds, ids: ps.map(p => p.id), bio, stats: {}, games: [], recommended: [], picked: [] };
+}
+
+/** Change the pool size (new applicant list) or the number of rounds, before the scrimmages */
+export function setTryout(c: Career, size: TryoutSize, rounds: number) {
+  const t = rk(c).tryout!;
+  if (t.stage !== 'list') return;
+  if (size !== t.size) { const r = rngOf(c); makeApplicants(c, r, size, rounds); saveRng(c, r); }
+  else t.rounds = rounds;
+}
+
+/** Applicants play 6:6 scrimmages among themselves; the record is what the coach sees */
+export function playTryout(c: Career) {
+  const t = rk(c).tryout!;
+  if (t.stage !== 'list') return;
+  const r = rngOf(c);
+  const ps = tryoutPlayers(c);
   const stats: Record<string, TryStat> = {};
   const coach = staffGrade(c, 'coach') ?? 'none';
   for (const p of ps) {
     const execTrue = ovr(p) * 0.6 + p.tech.positioning * 0.2 + p.phys.agility * 0.2;
     const est = execTrue + r.normal(0, EXEC_SD[coach]);
     const jump = p.phys.jump + r.normal(0, 4);
-    stats[p.id] = { g: 0, pts: 0, att: 0, kills: 0, recv: 0, recvA: 0, blocks: 0, aces: 0, digs: 0, exec: est >= 60 ? 'A' : est >= 53 ? 'B' : est >= 46 ? 'C' : 'D', jump: gradeOf(jump) };
+    stats[p.id] = { g: 0, w: 0, pts: 0, att: 0, kills: 0, recv: 0, recvA: 0, blocks: 0, aces: 0, digs: 0, exec: est >= 60 ? 'A' : est >= 53 ? 'B' : est >= 46 ? 'C' : 'D', jump: gradeOf(jump) };
   }
+  const helper = makeAt(r, 'MB', 50, 30, 0);
+  helper.name = '보조 코치';
   const by = (pos: Position) => ps.filter(p => p.position === pos);
-  for (let round = 0; round < 3; round++) {
-    const shuffle = <T,>(a: T[]) => { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = r.int(0, i); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+  const shuffle = <T,>(a: T[]) => { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = r.int(0, i); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+  const games: string[] = [];
+  const nTeams = t.size / 6;
+  for (let round = 0; round < t.rounds; round++) {
     const S = shuffle(by('S')), OH = shuffle(by('OH')), MB = shuffle(by('MB')), OP = shuffle(by('OP')), L = shuffle(by('L'));
-    const teams: Team[] = [0, 1, 2, 3].map(i => ({
-      name: `${'ABCD'[i]}조`, lineup: [S[i], OH[i * 2], MB[i * 2], OP[i], OH[i * 2 + 1], MB[i * 2 + 1]], libero: L[i], tactic: { ...DEFAULT_TACTIC },
-      bench: [OH[8], L[4]].filter(Boolean),
+    const teams: Team[] = Array.from({ length: nTeams }, (_, i) => ({
+      name: `${'ABCDEF'[i]}조`, lineup: [S[i], OH[i * 2], MB[i], OP[i], OH[i * 2 + 1], helper], libero: L[i], tactic: { ...DEFAULT_TACTIC }, bench: [],
     }));
-    for (const [a, b] of [[0, 1], [2, 3]]) {
-      const res = playMatch([teams[a], teams[b]], { seed: r.int(1, 2 ** 31), log: false, coaches: [aiCoach, aiCoach] });
+    for (let a = 0; a + 1 < nTeams; a += 2) {
+      const res = playMatch([teams[a], teams[a + 1]], { seed: r.int(1, 2 ** 31), log: false, coaches: [aiCoach, aiCoach] });
+      const sideOf = new Map<string, number>();
+      [teams[a], teams[a + 1]].forEach((tm, side) => [...tm.lineup, tm.libero].forEach(p => sideOf.set(p.id, side)));
+      let mvp = '', best = -1;
       for (const [id, l] of res.lines) {
         const s = stats[id];
         if (!s) continue;
         s.g++; s.pts += l.kills + l.blocks + l.aces; s.att += l.attacks; s.kills += l.kills; s.recv += l.receives; s.recvA += l.recvA;
         s.blocks += l.blocks; s.aces += l.aces; s.digs += l.digs;
+        if (sideOf.get(id) === res.winner) s.w++;
+        const v = l.kills + l.blocks + l.aces + l.digs * 0.3;
+        if (v > best) { best = v; mvp = ps.find(p => p.id === id)!.name; }
       }
+      games.push(`${round + 1}R ${teams[a].name} ${res.setsWon[0]}:${res.setsWon[1]} ${teams[a + 1].name} · 수훈 ${mvp}`);
     }
     for (const p of ps) p.energy = 100;
   }
-  // coaches shortlist the core: the 6 they rate best (a lower-grade coach misjudges more)
-  const recommended = ps.map(p => ({ p, s: ovr(p) + r.normal(0, EXEC_SD[coach] * 0.6) })).sort((a, b) => b.s - a.s).slice(0, 6).map(x => x.p.id);
-  rk(c).tryout = { ids: ps.map(p => p.id), stats, recommended, picked: [...recommended] };
+  // coaches shortlist the core (a lower-grade coach misjudges more)
+  const nRec = t.size === 12 ? 4 : t.size === 24 ? 6 : 7;
+  const recommended = ps.map(p => ({ p, s: ovr(p) + r.normal(0, EXEC_SD[coach] * 0.6) })).sort((a, b) => b.s - a.s).slice(0, nRec).map(x => x.p.id);
+  Object.assign(t, { stage: 'played', stats, games, recommended, picked: [...recommended] });
+  saveRng(c, r);
 }
 
 export const tryoutPlayers = (c: Career) => {
@@ -346,11 +422,14 @@ export const tryoutPlayers = (c: Career) => {
   return t.ids.map(id => c.world.freeAgents.find(p => p.id === id) ?? c.world.clubs[USER].roster.find(p => p.id === id)).filter((p): p is Pro => !!p);
 };
 
+export const TRYOUT_PICK = { min: 8, max: 16 };
+
 export function tryoutCheck(c: Career): string | null {
   const t = rk(c).tryout!;
+  if (t.stage !== 'played') return '먼저 트라이아웃 경기를 치르세요.';
   const ps = tryoutPlayers(c).filter(p => t.picked.includes(p.id));
-  if (ps.length < 10) return `최소 10명을 뽑아야 합니다 (지금 ${ps.length}명).`;
-  if (ps.length > 16) return `트라이아웃 합격은 16명까지입니다 (지금 ${ps.length}명).`;
+  if (ps.length < TRYOUT_PICK.min) return `최소 ${TRYOUT_PICK.min}명을 뽑아야 합니다 (지금 ${ps.length}명).`;
+  if (ps.length > TRYOUT_PICK.max) return `트라이아웃 합격은 ${TRYOUT_PICK.max}명까지입니다 (지금 ${ps.length}명).`;
   for (const [pos, n] of Object.entries(ROOKIE_MIN)) {
     if (ps.filter(p => p.position === pos).length < n) return `${pos} 포지션이 ${n}명 이상 필요합니다.`;
   }
@@ -360,14 +439,24 @@ export function tryoutCheck(c: Career): string | null {
 function finishTryout(c: Career, r: Rng) {
   const t = rk(c).tryout!;
   const club = c.world.clubs[USER];
+  const pool = tryoutPlayers(c);
   const picked = c.world.freeAgents.filter(p => t.picked.includes(p.id));
+  // 안목 점수: how many of the hidden top-N the picks caught, N = number picked
+  const byOvr = [...pool].sort((a, b) => ovrExact(b) - ovrExact(a));
+  const top = new Set(byOvr.slice(0, picked.length).map(p => p.id));
+  const mean = (xs: Pro[]) => xs.reduce((a, p) => a + ovr(p), 0) / Math.max(1, xs.length);
+  t.review = {
+    n: picked.length, hits: picked.filter(p => top.has(p.id)).length,
+    avgPicked: mean(picked), avgBest: mean(byOvr.slice(0, picked.length)), avgPool: mean(pool),
+    ovr: Object.fromEntries(picked.map(p => [p.id, ovr(p)])),
+  };
   c.world.freeAgents = c.world.freeAgents.filter(p => !t.picked.includes(p.id));
   for (const p of picked) sign(club, p, ECON.tryoutSalary);
   // a few more free agents join the market (design §4)
   const POS: Position[] = ['S', 'OH', 'OH', 'MB', 'MB', 'OP', 'L', 'OH'];
   for (const pos of POS) c.world.freeAgents.push(makeAt(r, pos, Math.max(46, Math.min(62, r.normal(55, 4))), r.int(22, 30), r.int(2, 6)));
   rk(c).revealed = true;
-  news(c, `트라이아웃 합격자 ${picked.length}명 확정 · 능력치 공개! 주전 평균 OVR ${starterAvg(club).toFixed(1)}`, 'good');
+  news(c, `트라이아웃 합격자 ${picked.length}명 확정 · 능력치 공개! 주전 평균 OVR ${starterAvg(club).toFixed(1)} · 안목 ${t.review.hits}/${t.review.n}`, 'good');
 }
 
 // ───────────────────────── opponents (day 2) ─────────────────────────
@@ -439,9 +528,10 @@ export function rookieStartLive(c: Career): LiveMatch | null {
   const r = rngOf(c);
   const seed = r.int(1, 2 ** 31);
   saveRng(c, r);
+  const before = snapshot(c.world.clubs[USER]);
   const th = userTeamOf(c), ta = oppTeam(c, f.opp, f.squad);
-  const steps = matchSteps([th.team, ta.team], { seed, log: true, homeTeam: 0, manual: 0, coaches: [c.autoCoach ? assistantCoach : undefined, aiCoach] });
-  return { steps, home: USER, away: f.opp, userSide: 0, label: f.label, th, ta };
+  const steps = matchSteps([th.team, ta.team], { seed, log: true, homeTeam: 0, manual: 0, coaches: [c.autoCoach ? assistantCoach : undefined, aiCoach], tacticBoost: TACTIC_BOOST });
+  return { steps, home: USER, away: f.opp, userSide: 0, label: f.label, th, ta, before };
 }
 
 /** Points for one official match (design §8) */
@@ -497,7 +587,7 @@ function playOfficial(c: Career, r: Rng, live?: LiveMatch): string {
   const f = nextMatch(c)!;
   const done = live?.result && live.away === f.opp ? live : undefined;
   const th = done ? done.th : userTeamOf(c), ta = done ? done.ta : oppTeam(c, f.opp, f.squad);
-  const res = done ? done.result! : playMatch([th.team, ta.team], { seed: r.int(1, 2 ** 31), log: true, homeTeam: 0, coaches: [c.autoCoach ? assistantCoach : undefined, aiCoach] });
+  const res = done ? done.result! : playMatch([th.team, ta.team], { seed: r.int(1, 2 ** 31), log: true, homeTeam: 0, coaches: [c.autoCoach ? assistantCoach : undefined, aiCoach], tacticBoost: TACTIC_BOOST });
   const ourOvr = starterAvg(c.world.clubs[USER]);
   const oOvr = ta.starters.reduce((a, p) => a + ovr(p), 0) / ta.starters.length;
   const sc = scoreMatch(f.opp, f.squad, ourOvr, oOvr, res.setsWon);
@@ -508,6 +598,11 @@ function playOfficial(c: Career, r: Rng, live?: LiveMatch): string {
   else if (res.setsWon[0] === 2) s.hype = Math.min(2, s.hype + 0.04);
   const club = c.world.clubs[USER];
   afterMatch(r, club, th.starters as Pro[], sc.win, res.setsWon[0] + res.setsWon[1], 7 - f.no);
+  // an official match is a big lesson for the starters, bigger when we win and our plan worked
+  const hits = res.tacticHits?.[0] ?? 0;
+  grow(c, (sc.win ? 1.2 : 0.7) * (1 + Math.min(HIT_CAP, hits * HIT_GROWTH)), new Set(th.starters.map(p => p.id)));
+  addForm(c, (sc.win ? 0.15 : 0.03) + Math.min(0.15, hits * 0.006));
+  s.lastHits = hits;
   if (sc.win) club.wins++; else club.losses++;
   recordReport(c, res, th, ta, f.opp, `${f.label} vs ${c.names![f.opp].short}${f.squad ? ` (${f.squad})` : ''}`, false);
   s.games.push({
@@ -518,7 +613,7 @@ function playOfficial(c: Career, r: Rng, live?: LiveMatch): string {
   for (const p of th.starters as Pro[]) if (p.injured > 0) news(c, `${p.name} 부상 (${p.injured}경기 결장)`, 'bad');
   const name = c.names![f.opp].short;
   news(c, `${f.label} ${name}${f.squad ? ` ${f.squad}` : ''}전 ${res.setsWon[0]}:${res.setsWon[1]} ${sc.win ? '승리' : '패배'} · 창단 점수 ${sc.points >= 0 ? '+' : ''}${sc.points.toFixed(1)} · 시청률 ${rt.rating.toFixed(1)}% (${rt.note})`, sc.win ? 'good' : 'bad');
-  return `${sc.win ? '승리' : '패배'} ${res.setsWon[0]}:${res.setsWon[1]} · 점수 ${sc.points >= 0 ? '+' : ''}${sc.points.toFixed(1)} · 시청률 ${rt.rating.toFixed(1)}%`;
+  return `${sc.win ? '승리' : '패배'} ${res.setsWon[0]}:${res.setsWon[1]} · 점수 ${sc.points >= 0 ? '+' : ''}${sc.points.toFixed(1)} · 작전 적중 ${hits}회 · 시청률 ${rt.rating.toFixed(1)}%`;
 }
 
 // ───────────────────────── free days ─────────────────────────
@@ -526,13 +621,24 @@ function playOfficial(c: Career, r: Rng, live?: LiveMatch): string {
 export type RookieFree = 'train' | 'practice' | 'rest';
 export const PRACTICE_GROWTH: Record<League, number> = { school: 0.5, pro: 0.8, overseas: 1.3 };
 
-function grow(c: Career, mult: number) {
+/** training pays more on fresh legs: rest before a hard day matters */
+export const condGrowth = (cond: number) => (cond >= 70 ? 1.25 : cond >= 50 ? 1.1 : cond >= 35 ? 1 : 0.8);
+
+/** one day's growth; `only` = just these players (the starters after a match) */
+function grow(c: Career, mult: number, only?: Set<string>) {
   const club = c.world.clubs[USER];
   const env = clubGrowthMult(club);
+  const form = 1 + (rk(c).form ?? 0);
   for (const p of club.roster) {
+    if (only && !only.has(p.id)) continue;
     const play = p.injured > 0 ? 0.3 : 1;
-    spendGP(p, seasonGP(p, env) * TRAIN_GP * mult * play, trainModeFor(p));
+    spendGP(p, seasonGP(p, env) * TRAIN_GP * mult * play * condGrowth(p.condition) * form, trainModeFor(p));
   }
+}
+
+function addForm(c: Career, d: number) {
+  const s = rk(c);
+  s.form = Math.min(FORM_MAX, (s.form ?? 0) + d);
 }
 
 function heal(c: Career, r: Rng) {
@@ -556,15 +662,18 @@ function freeDay(c: Career, r: Rng, choice: RookieFree, league: League = 'school
   if (choice === 'train') {
     grow(c, Math.min(1, 0.4 + avgOf(club, p => p.energy) / 100));
     for (const p of club.roster) { p.energy = Math.max(20, p.energy - 10 / trainerRec(c)); p.sense = Math.max(0, p.sense - 1); p.condition = Math.max(0, p.condition - 1); }
-    return '훈련 · 능력치 성장 (체력이 낮으면 효과가 줄어요)';
+    return '훈련 · 능력치 성장 (체력·컨디션이 좋을수록 효과가 커요)';
   }
   // practice match vs a random club of the chosen league
   const ids = league === 'pro' ? PRO_IDS : league === 'overseas' ? OVERSEAS_IDS : SCHOOL_IDS;
   const opp = ids[r.int(0, ids.length - 1)];
   const squad = league === 'pro' ? squadFor(starterAvg(club)) : undefined;
   const th = userTeamOf(c), ta = oppTeam(c, opp, squad);
-  const res = playMatch([th.team, ta.team], { seed: r.int(1, 2 ** 31), log: true, coaches: [c.autoCoach ? assistantCoach : undefined, aiCoach] });
-  grow(c, PRACTICE_GROWTH[league]);
+  const res = playMatch([th.team, ta.team], { seed: r.int(1, 2 ** 31), log: true, coaches: [c.autoCoach ? assistantCoach : undefined, aiCoach], tacticBoost: TACTIC_BOOST });
+  const hits = res.tacticHits?.[0] ?? 0;
+  grow(c, PRACTICE_GROWTH[league] * (1 + Math.min(HIT_CAP, hits * HIT_GROWTH)));
+  addForm(c, (res.winner === 0 ? 0.05 : 0) + Math.min(0.08, hits * 0.003));
+  s.lastHits = hits;
   const starters = new Set(th.starters.map(p => p.id));
   for (const p of club.roster) {
     const gain = (starters.has(p.id) ? 9 : 5) * (league === 'overseas' ? 1.3 : 1);
@@ -577,7 +686,7 @@ function freeDay(c: Career, r: Rng, choice: RookieFree, league: League = 'school
   if (res.winner === 0) s.hype = Math.min(2, s.hype + (league === 'school' ? 0.01 : 0.03));
   const name = `${c.names![opp].short}${squad ? ` ${squad}` : ''}`;
   recordReport(c, res, th, ta, opp, `연습경기 vs ${name}`, true);
-  return `연습경기 vs ${name} ${res.setsWon[0]}:${res.setsWon[1]} ${res.winner === 0 ? '승' : '패'} · 경기감각 ↑ · 방송 ${rt.rating.toFixed(1)}%`;
+  return `연습경기 vs ${name} ${res.setsWon[0]}:${res.setsWon[1]} ${res.winner === 0 ? '승' : '패'} · 작전 적중 ${hits}회 · 방송 ${rt.rating.toFixed(1)}%`;
 }
 
 const avgOf = (club: Club, f: (p: Pro) => number) => club.roster.reduce((a, p) => a + f(p), 0) / Math.max(1, club.roster.length);
@@ -730,12 +839,39 @@ export function chooseEnding(c: Career, i: number) {
 
 export interface RookieInput { free?: RookieFree; league?: League; live?: LiveMatch }
 
+const FREE_KO: Record<RookieFree, string> = { train: '훈련', practice: '연습경기', rest: '휴식' };
+
 export function rookieAdvance(c: Career, input: RookieInput = {}): string | void {
+  const s = rk(c);
+  const k = dayKind(s.day);
+  if (k === 'ending') return;
+  const club = c.world.clubs[USER];
+  const before = input.live?.before ?? snapshot(club);
+  const form0 = s.form ?? 0;
+  const title = k === 'match' ? `${s.day}일차 · ${nextMatch(c)!.label}` : k === 'free' ? `${s.day}일차 · ${FREE_KO[input.free ?? 'train']}` : rookieLabel(c);
+  s.lastHits = undefined;
+  const day0 = s.day;
+  const msg = advanceDay(c, input);
+  if (s.day === day0) return msg; // not allowed yet (tryout or schedule check)
+  if (k === 'tryout') { c.report = null; return msg; }
+  const rep = diffReport(before, club, title, msg || undefined);
+  {
+    if (s.lastHits !== undefined) rep.notes.push(`작전 적중 ${s.lastHits}회 → 경기 성장 보너스 +${Math.round(Math.min(HIT_CAP, s.lastHits * HIT_GROWTH) * 100)}%`);
+    if ((s.form ?? 0) > 0.005) rep.notes.push(`기세 ${Math.round((s.form ?? 0) * 100)}% (${(s.form ?? 0) >= form0 ? '상승' : '하락'}) · 모든 성장 ×${(1 + (s.form ?? 0)).toFixed(2)}`);
+    if (k === 'free' && (input.free ?? 'train') === 'train') {
+      const cond = club.roster.reduce((a, p) => a + condGrowth(before.players[p.id]?.c ?? p.condition), 0) / Math.max(1, club.roster.length);
+      rep.notes.push(`컨디션 보정 평균 ×${cond.toFixed(2)} (컨디션 70↑ ×1.25 · 50↑ ×1.1 · 35↓ ×0.8)`);
+    }
+  }
+  c.report = rep;
+  return msg;
+}
+
+function advanceDay(c: Career, input: RookieInput): string | void {
   const s = rk(c);
   const r = rngOf(c);
   let msg: string | void = undefined;
   const k = dayKind(s.day);
-  if (k === 'ending') return;
   if (k === 'tryout') { const err = tryoutCheck(c); if (err) return err; finishTryout(c, r); }
   else if (k === 'schedule') {
     const err = scheduleCheck(c); if (err) return err;
@@ -745,6 +881,7 @@ export function rookieAdvance(c: Career, input: RookieInput = {}): string | void
   else if (k === 'match') msg = playOfficial(c, r, input.live);
   else msg = freeDay(c, r, input.free ?? 'train', input.league);
   if (s.day % 7 === 0) weekEnd(c);
+  s.form = (s.form ?? 0) * 0.9;
   s.day++;
   c.turnNo++;
   if (s.day === LAST_DAY) {
@@ -760,6 +897,8 @@ export function rookieAdvance(c: Career, input: RookieInput = {}): string | void
 export function autoToMatch(c: Career): string {
   const s = rk(c);
   let n = 0;
+  const before = snapshot(c.world.clubs[USER]);
+  const day0 = s.day;
   while (dayKind(s.day) === 'free') {
     const club = c.world.clubs[USER];
     if (avgOf(club, p => p.energy) < 60 || MATCH_DAYS.includes(s.day + 1)) rookieAdvance(c, { free: 'rest' });
@@ -767,18 +906,20 @@ export function autoToMatch(c: Career): string {
     else rookieAdvance(c, { free: 'train' });
     n++;
   }
-  return `${n}일 자동 진행 (훈련 · 감각이 떨어지면 해외팀 연습경기 · 지치거나 경기 전날엔 휴식)`;
+  const msg = `${n}일 자동 진행 (훈련 · 감각이 떨어지면 해외팀 연습경기 · 지치거나 경기 전날엔 휴식)`;
+  const notes = c.report?.notes.filter(x => x.startsWith('기세')) ?? [];
+  c.report = diffReport(before, c.world.clubs[USER], `${day0}~${s.day - 1}일차 자동 진행`, msg);
+  c.report.notes.push(...notes);
+  return msg;
 }
 
 /** What the analyst can see of an opponent's plan */
 export function rookieScout(c: Career, opp: number, squad?: Squad): (string | null)[] {
-  const t = oppTeam(c, opp, squad).team.tactic;
-  const lvlA = c.world.clubs[USER].facilities.analysis;
-  const vals = [
-    `${DIST_TXT[t.distribution]}${t.trick && t.trick !== 'none' ? ` · ${TRICK_TXT[t.trick]}` : ''}`, TEMPO_TXT[t.tempo],
-    t.serve === 'target' ? `목적타 (${AIM_TXT[t.aim ?? 'weak']})` : SERVE_TXT[t.serve], BLOCK_TXT[t.block], `${DEF_TXT[t.defense]} · ${t.reception}인 리시브`,
-  ];
-  return vals.map((v, i) => (i < lvlA ? v : null));
+  return scoutText(oppTeam(c, opp, squad).team.tactic, c.world.clubs[USER].facilities.analysis);
+}
+/** the same, as tactic values for 추천 모드 */
+export function rookieScoutKnown(c: Career, opp: number, squad?: Squad) {
+  return knownTactic(oppTeam(c, opp, squad).team.tactic, c.world.clubs[USER].facilities.analysis);
 }
 
 export function opponentStarters(c: Career, opp: number, squad?: Squad): Pro[] {

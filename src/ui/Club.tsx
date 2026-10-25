@@ -8,6 +8,7 @@ import type { Position } from '../engine/types.ts';
 import { Grade, Icon, money, Overlay, Ovr, Pos, POS_KO, Sheet, Stars, useGame } from './common.tsx';
 import { FacilityArt } from './art.tsx';
 import { CreditsBody } from './Credits.tsx';
+import { OptionsCard } from './Assist.tsx';
 
 const FAC: Facility[] = ['training', 'medical', 'restaurant', 'stadium', 'analysis', 'bus'];
 
@@ -74,6 +75,7 @@ export function Club() {
           <div className="list small">{c.seasons.map(s => <Line key={s.year} k={`${s.year}시즌 · ${DIV_NAME[s.division]}`} v={`${s.finish} · ${s.balance >= 0 ? '흑자' : '적자'}`} />)}</div>
         </section>
       )}
+      <OptionsCard />
       <button className="btn block" onClick={() => setCredits(true)}>만든이 · Contact</button>
       <button className="btn block" onClick={quit}>저장하고 타이틀로</button>
       {credits && <Sheet title="만든이 · Contact" onClose={() => setCredits(false)}><CreditsBody /></Sheet>}

@@ -127,6 +127,8 @@ export interface MatchResult {
   tacticChanges: [number, number];
   subs: [number, number];
   technicalTimeouts: number;
+  /** plays won by a tactic (set play fooled the block, aimed serve ace, marked block, tip defense dig) */
+  tacticHits?: [number, number];
 }
 
 export interface TeamTotals {

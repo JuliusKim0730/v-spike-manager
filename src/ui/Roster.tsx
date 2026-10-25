@@ -8,6 +8,7 @@ import type { TrainMode } from '../engine/league/growth.ts';
 import { clubGrowthMult, playMult } from '../engine/league/season.ts';
 import { RULES } from '../engine/league/rules.ts';
 import { SKILL_BY_ID, skillSlots } from '../engine/skills.ts';
+import { STAT_KO } from '../game/report.ts';
 import { Gauges, Grade, Overlay, Ovr, Pos, POS_KO, useGame } from './common.tsx';
 import { Avatar } from './art.tsx';
 
@@ -59,10 +60,6 @@ export function Roster() {
   );
 }
 
-const STAT_KO: Record<string, string> = {
-  jump: '점프력', stamina: '지구력', agility: '민첩성', flexibility: '유연성',
-  spike: '스파이크', backAttack: '백어택', quick: '속공', block: '블로킹', serve: '서브', receive: '리시브', dig: '디그', set: '토스', positioning: '위치 선정',
-};
 const GROWTH_KO = { early: '조기 성장형', normal: '평균형', late: '만기형', elite: '엘리트' };
 
 export function PlayerSheet({ p, onClose }: { p: Pro; onClose(): void }) {
